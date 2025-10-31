@@ -1,26 +1,52 @@
 name: Crypto Data Worker
+
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Every 5 minutes
-  workflow_dispatch:       # Manual trigger
+    - cron: '*/5 * * * *' # Every 5 minutes
+  workflow_dispatch:
 
 jobs:
   worker:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: |
-          pip install -r services/worker/requirements.txt
-          pip install -r services/common/requirements.txt
-          pip install -r services/api/requirements.txt
-      - name: Run Data Worker
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SYMBOLS: binance:BTC/USDT,binance:ETH/USDT,bybit:SOL/USDT
-          SCHEDULE_MINUTES: 5
-        run: python services/worker/run_worker.py
+    - uses: actions/checkout@v4
+
+    - name: Cache Python packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('services/worker/requirements.txt', 'services/common/requirements.txt', 'services/api/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install -r services/worker/requirements.txt
+        pip install -r services/common/requirements.txt
+        pip install -r services/api/requirements.txt
+
+    - name: Run Data Worker
+      env:
+        # DATABASE_URL should be set from Railway PostgreSQL service
+        # Go to Railway dashboard → PostgreSQL → Variables → Copy DATABASE_URL
+        # Add it to GitHub Secrets as DATABASE_URL
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        SYMBOLS: binance:BTC/USDT,binance:ETH/USDT,bybit:SOL/USDT
+        SCHEDULE_MINUTES: 5
+      run: python services/worker/run_worker.py
+
+    # Optional Slack notification on failure
+    - name: Notify Slack on failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        fields: repo,message,commit,author,workflow
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

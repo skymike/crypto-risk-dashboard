@@ -3,6 +3,7 @@ import streamlit as st
 from urllib.parse import urlencode
 
 DEFAULT_CANDIDATES = [
+    "https://crypto-risk-api-production.up.railway.app",
     "https://crypto-risk-api.onrender.com",
     "http://api:8000",
     "http://localhost:8000",
@@ -38,7 +39,7 @@ st.caption("Self-hosted. Graphs • Meters • Hot Signals")
 
 if not API_BASE:
     st.error("Could not locate the API automatically.")
-    manual = st.text_input("Enter your API base URL (e.g., https://crypto-risk-api.onrender.com)")
+    manual = st.text_input("Enter your API base URL (e.g., https://crypto-risk-api-production.up.railway.app)")
     if manual and probe_api(manual):
         API_BASE = manual
         st.success("Connected!")
