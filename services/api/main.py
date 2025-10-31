@@ -1,0 +1,35 @@
+import os
+from fastapi import FastAPI, Query
+from services_common.db import fetch_df
+from services_common.signals import latest_signals_for_pairs, signal_explanations
+from services_common.config import load_config
+
+app = FastAPI(title="Crypto Risk API", version="0.1.0")
+cfg = load_config()
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.get("/pairs")
+def pairs():
+    return {"pairs": cfg.symbols}
+
+@app.get("/signals")
+def get_signals(pairs: str = Query(None)):
+    if pairs:
+        pairs_list = [p.strip() for p in pairs.split(",") if p.strip()]
+    else:
+        pairs_list = cfg.symbols
+    data = latest_signals_for_pairs(pairs_list)
+    return {"signals": data, "explanations": signal_explanations()}
+
+@app.get("/timeseries/{metric}")
+def timeseries(metric: str, pair: str, limit: int = 500):
+    table_map = {"candles":"candles","funding":"funding_rates","oi":"open_interest","vol":"volatility","sentiment":"sentiment"}
+    table = table_map.get(metric)
+    if not table:
+        return {"error":"unknown metric"}
+    q = f"""SELECT * FROM {table} WHERE pair=%(pair)s ORDER BY ts DESC LIMIT %(limit)s"""
+    df = fetch_df(q, {"pair": pair, "limit": limit})
+    return {"columns": list(df.columns), "rows": df.to_dict(orient="records")}
