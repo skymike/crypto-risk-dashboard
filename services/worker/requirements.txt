@@ -19,8 +19,11 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 streamlit==1.39.0
 streamlit_echarts==0.4.0
+<<<<<<< HEAD
 psycopg2-binary==2.9.9
 pandas==2.1.4
 requests==2.31.0
 ccxt==4.1.60
 python-dotenv==1.0.0
+=======
+>>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
