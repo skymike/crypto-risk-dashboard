@@ -8,9 +8,11 @@ from pathlib import Path
 repo_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(repo_root))
 
-# Import the services_common namespace package
+# Import the services_common namespace package FIRST
+# This must be imported before any services_common.* imports
 import services_common
 
+# Now we can import from services_common
 from services_common.db import ensure_schema
 from services_common.ingest import run_ingest_cycle
 from services_common.signals import compute_all_signals
