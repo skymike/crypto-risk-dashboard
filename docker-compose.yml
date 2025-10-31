@@ -1,4 +1,6 @@
+version: "3.9"
 services:
+
   db:
     image: postgres:16
     environment:
@@ -14,11 +16,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
 
   api:
     build: ./services/api
@@ -28,6 +31,18 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+    user: "1000:1000"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.0"
 
   worker:
     build: ./services/worker
@@ -35,8 +50,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
+    restart: on-failure
+    user: "1000:1000"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.0"
 
   ui:
     build: ./services/ui
@@ -46,6 +66,13 @@ services:
         condition: service_started
     ports:
       - "8501:8501"
+    restart: on-failure
+    user: "1000:1000"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.0"
 
 volumes:
   db_data:
