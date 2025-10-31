@@ -16,7 +16,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('services/worker/requirements.txt', 'services/common/requirements.txt', 'services/api/requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('services/worker/requirements.txt', 'services/api/requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
 
@@ -28,7 +28,6 @@ jobs:
     - name: Install dependencies
       run: |
         pip install -r services/worker/requirements.txt
-        pip install -r services/common/requirements.txt
         pip install -r services/api/requirements.txt
 
     - name: Run Data Worker

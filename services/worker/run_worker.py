@@ -1,7 +1,15 @@
 import os
 import sys
-# Add the common module to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
+from pathlib import Path
+
+# Add the repo root to path so services_common imports work
+# This file is at services/worker/run_worker.py
+# So we need to go up 2 levels to get to repo root
+repo_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(repo_root))
+
+# Import the services_common namespace package
+import services_common
 
 from services_common.db import ensure_schema
 from services_common.ingest import run_ingest_cycle
