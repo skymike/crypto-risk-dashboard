@@ -1,20 +1,20 @@
-import os, time
+import os
+import sys
+# Add the common module to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
+
 from services_common.db import ensure_schema
 from services_common.ingest import run_ingest_cycle
 from services_common.signals import compute_all_signals
-from services_common.config import load_config
 
 def main():
+    print("[worker] Starting worker cycle...")
     ensure_schema()
-    interval = int(os.getenv("SCHEDULE_MINUTES", "5"))
-    print(f"[worker] schedule every {interval} minutes.")
-    while True:
-        print("[worker] ingest cycle...")
-        run_ingest_cycle()
-        print("[worker] compute signals...")
-        compute_all_signals()
-        print("[worker] sleep...")
-        time.sleep(60 * interval)
+    print("[worker] Running ingest cycle...")
+    run_ingest_cycle()
+    print("[worker] Computing signals...")
+    compute_all_signals()
+    print("[worker] Worker cycle completed successfully!")
 
 if __name__ == "__main__":
     main()
