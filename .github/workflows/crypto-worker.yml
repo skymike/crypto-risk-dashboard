@@ -41,9 +41,9 @@ jobs:
         SCHEDULE_MINUTES: 5
       run: python services/worker/run_worker.py
 
-    # Optional Slack notification on failure
+    # Optional Slack notification on failure (only runs if SLACK_WEBHOOK_URL secret is set)
     - name: Notify Slack on failure
-      if: failure()
+      if: failure() && secrets.SLACK_WEBHOOK_URL != ''
       uses: 8398a7/action-slack@v3
       with:
         status: failure
