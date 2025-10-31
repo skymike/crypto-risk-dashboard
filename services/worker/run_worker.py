@@ -8,7 +8,17 @@ from pathlib import Path
 repo_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(repo_root))
 
-# Directly import from services.common (simpler and more reliable)
+# Debug: Verify the path is correct
+print(f"[DEBUG] Repo root: {repo_root}", file=sys.stderr)
+print(f"[DEBUG] Services path exists: {(repo_root / 'services').exists()}", file=sys.stderr)
+print(f"[DEBUG] Services/common path exists: {(repo_root / 'services' / 'common').exists()}", file=sys.stderr)
+
+# Ensure services package can be imported
+# Import services first to make sure the package is recognized
+import services
+import services.common
+
+# Now import the specific modules we need
 from services.common.db import ensure_schema
 from services.common.ingest import run_ingest_cycle
 from services.common.signals import compute_all_signals
