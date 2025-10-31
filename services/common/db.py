@@ -1,6 +1,6 @@
 import os, psycopg2, pandas as pd
 from psycopg2.extras import execute_values
-from services_common.config import load_config
+from services.common.config import load_config
 
 _cfg = load_config()
 
@@ -37,7 +37,7 @@ def upsert_many(table: str, rows: list[dict], conflict_cols: list[str], update_c
         execute_values(cur, sql, vals)
 
 def ensure_schema():
-    from services_common.schema import SCHEMA_SQL
+    from services.common.schema import SCHEMA_SQL
     execute(SCHEMA_SQL)
     _try_apply_timescale()
 

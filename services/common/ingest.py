@@ -1,11 +1,11 @@
 import pandas as pd
-from services_common.config import load_config
-from services_common.db import upsert_many
-from services_common.adapters.exchanges import fetch_candles
-from services_common.adapters.open_interest import fetch_open_interest, fetch_funding_rate
-from services_common.adapters.volatility import compute_atr_like
-from services_common.adapters.sentiment import fetch_sentiment
-from services_common.adapters.headlines import fetch_headlines
+from services.common.config import load_config
+from services.common.db import upsert_many
+from services.common.adapters.exchanges import fetch_candles
+from services.common.adapters.open_interest import fetch_open_interest, fetch_funding_rate
+from services.common.adapters.volatility import compute_atr_like
+from services.common.adapters.sentiment import fetch_sentiment
+from services.common.adapters.headlines import fetch_headlines
 
 cfg = load_config()
 
