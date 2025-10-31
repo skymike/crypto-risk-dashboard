@@ -1,5 +1,8 @@
 import os, psycopg2, pandas as pd
 from psycopg2.extras import execute_values
+from services_common.config import load_config
+
+_cfg = load_config()
 
 def _conn():
     url = os.getenv("DATABASE_URL")
@@ -8,13 +11,7 @@ def _conn():
     return psycopg2.connect(
         host=_cfg.pg_host, port=_cfg.pg_port, dbname=_cfg.pg_db,
         user=_cfg.pg_user, password=_cfg.pg_pass
-    # fallback to local docker compose
-    host = os.getenv("POSTGRES_HOST","db")
-    port = int(os.getenv("POSTGRES_PORT","5432"))
-    db   = os.getenv("POSTGRES_DB","cryptodb")
-    user = os.getenv("POSTGRES_USER","cryptouser")
-    pwd  = os.getenv("POSTGRES_PASSWORD","cryptopass")
-    return psycopg2.connect(host=host, port=port, dbname=db, user=user, password=pwd)
+    )
 
 def execute(sql, params=None):
     with _conn() as conn, conn.cursor() as cur:
@@ -25,7 +22,8 @@ def fetch_df(sql, params=None) -> pd.DataFrame:
         return pd.read_sql(sql, conn, params=params)
 
 def upsert_many(table: str, rows: list[dict], conflict_cols: list[str], update_cols: list[str]):
-    if not rows: return
+    if not rows:
+        return
     cols = list(rows[0].keys())
     vals = [[r[c] for c in cols] for r in rows]
     on_conflict = ", ".join(conflict_cols)
@@ -41,11 +39,16 @@ def upsert_many(table: str, rows: list[dict], conflict_cols: list[str], update_c
 def ensure_schema():
     from services_common.schema import SCHEMA_SQL
     execute(SCHEMA_SQL)
+    _try_apply_timescale()
+
+def _try_apply_timescale():
+    # Silently attempt to enable Timescale and create hypertables/CAGGs
     try:
         from pathlib import Path
-        ts_sql = (Path(__file__).parent / "schema_timescale.sql")
-        if ts_sql.exists():
+        path = Path(__file__).parent / "schema_timescale.sql"
+        if path.exists():
+            sql = path.read_text(encoding="utf-8")
             with _conn() as conn, conn.cursor() as cur:
-                cur.execute(ts_sql.read_text(encoding="utf-8"))
+                cur.execute(sql)
     except Exception:
-        pass
+        pass  # extension may be unavailable; that's fine

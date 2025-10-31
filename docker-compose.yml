@@ -15,11 +15,6 @@ services:
       timeout: 5s
       retries: 20
 
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-
   api:
     build: ./services/api
     env_file: .env
@@ -35,8 +30,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
 
   ui:
     build: ./services/ui

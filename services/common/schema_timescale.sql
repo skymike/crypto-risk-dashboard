@@ -1,4 +1,7 @@
+-- Enable Timescale if available
 CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+-- Convert base tables to hypertables
 SELECT create_hypertable('candles', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('funding_rates', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('open_interest', 'ts', if_not_exists => TRUE);
@@ -6,6 +9,7 @@ SELECT create_hypertable('volatility', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('sentiment', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('signals', 'ts', if_not_exists => TRUE);
 
+-- Example continuous aggregate for faster OHLC queries
 CREATE MATERIALIZED VIEW IF NOT EXISTS candles_1h
 WITH (timescaledb.continuous) AS
 SELECT
@@ -19,6 +23,7 @@ SELECT
 FROM candles
 GROUP BY 1,2;
 
+-- Auto-refresh policy
 SELECT add_continuous_aggregate_policy(
   'candles_1h',
   start_offset => INTERVAL '3 days',

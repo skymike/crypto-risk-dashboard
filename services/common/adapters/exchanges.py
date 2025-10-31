@@ -1,4 +1,5 @@
-import datetime as dt, ccxt
+import time, pandas as pd, datetime as dt
+import ccxt
 
 def fetch_candles(exchange_pair: str, timeframe="1h", limit=200):
     ex_name, pair = exchange_pair.split(":", 1)
@@ -10,7 +11,7 @@ def fetch_candles(exchange_pair: str, timeframe="1h", limit=200):
         rows.append({"pair": exchange_pair, "ts": ts, "open": o, "high": h, "low": l, "close": c, "volume": v})
     return rows
 
-def mock_funding(exchange_pair: str, candles_df):
-    rate = (candles_df["close"].pct_change().fillna(0).tail(1).iloc[0]) / 10 if len(candles_df) else 0.0
-    ts = candles_df["ts"].tail(1).iloc[0] if len(candles_df) else dt.datetime.now(dt.timezone.utc)
+def mock_funding(exchange_pair: str, candles_df: pd.DataFrame):
+    rate = (candles_df["close"].pct_change().fillna(0).tail(1).iloc[0]) / 10
+    ts = candles_df["ts"].tail(1).iloc[0]
     return [{"pair": exchange_pair, "ts": ts, "rate": float(rate)}]

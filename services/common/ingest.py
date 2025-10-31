@@ -15,14 +15,18 @@ def run_ingest_cycle():
         upsert_many("candles", candle_rows, ["pair","ts"], ["open","high","low","close","volume"])
 
         df = pd.DataFrame(candle_rows)
-        fr = mock_funding(pair, df); upsert_many("funding_rates", fr, ["pair","ts"], ["rate"])
+        fr = mock_funding(pair, df)
+        upsert_many("funding_rates", fr, ["pair","ts"], ["rate"])
 
-        oi = fetch_open_interest(pair); upsert_many("open_interest", oi, ["pair","ts"], ["value_usd"])
+        oi = fetch_open_interest(pair)
+        upsert_many("open_interest", oi, ["pair","ts"], ["value_usd"])
 
         vol = compute_atr_like(df)
-        if vol: upsert_many("volatility", vol, ["pair","ts"], ["atr"])
+        if vol:
+            upsert_many("volatility", vol, ["pair","ts"], ["atr"])
 
-        sent = fetch_sentiment_mock(pair); upsert_many("sentiment", sent, ["pair","ts"], ["mentions","score_norm","keywords"])
+        sent = fetch_sentiment_mock(pair)
+        upsert_many("sentiment", sent, ["pair","ts"], ["mentions","score_norm","keywords"])
 
     h = fetch_headlines_mock()
     upsert_many("headlines", h, ["id"], [])

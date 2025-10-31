@@ -17,6 +17,5 @@ textblob==0.18.0.post0
 nltk==3.9.1
 requests==2.32.3
 beautifulsoup4==4.12.3
-
 streamlit==1.39.0
 streamlit_echarts==0.4.0
