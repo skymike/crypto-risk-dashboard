@@ -1,36 +1,26 @@
-<<<<<<< HEAD
-import os, requests, pandas as pd
-=======
 import os
 import requests
 import pandas as pd
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
 import streamlit as st
 from urllib.parse import urlencode
 from typing import Optional
 
 DEFAULT_CANDIDATES = [
-<<<<<<< HEAD
     "https://crypto-risk-api-production.up.railway.app",
-=======
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
     "https://crypto-risk-api.onrender.com",
     "http://api:8000",
     "http://localhost:8000",
 ]
 
-def probe_api(base: str, timeout=2.0) -> bool:
+def probe_api(base: str, timeout: float = 2.0) -> bool:
     try:
         r = requests.get(f"{base}/health", timeout=timeout)
         return r.ok and r.json().get("ok") is True
     except Exception:
         return False
 
-<<<<<<< HEAD
-def resolve_api_base():
-=======
 def resolve_api_base() -> Optional[str]:
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
+    """Resolve API base URL from environment or known candidates."""
     env_base = os.getenv("API_BASE", "").strip()
     if env_base and probe_api(env_base):
         return env_base
@@ -39,12 +29,8 @@ def resolve_api_base() -> Optional[str]:
     seen, merged = set(), []
     for x in (candidates + DEFAULT_CANDIDATES):
         if x not in seen:
-<<<<<<< HEAD
-            merged.append(x); seen.add(x)
-=======
             merged.append(x)
             seen.add(x)
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
     for base in merged:
         if probe_api(base):
             return base
@@ -53,9 +39,8 @@ def resolve_api_base() -> Optional[str]:
 API_BASE = resolve_api_base()
 
 st.set_page_config(page_title="Crypto Risk Dashboard", layout="wide")
-st.title("🧭 Crypto Risk Dashboard")
-<<<<<<< HEAD
-st.caption("Self-hosted. Graphs • Meters • Hot Signals")
+st.title("Crypto Risk Dashboard")
+st.caption("Graphs, Meters, and Hot Signals")
 
 if not API_BASE:
     st.error("Could not locate the API automatically.")
@@ -63,68 +48,63 @@ if not API_BASE:
     if manual and probe_api(manual):
         API_BASE = manual
         st.success("Connected!")
-=======
 
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
 if not API_BASE:
     st.error("Could not connect to API backend. Please ensure the API is running and reachable.")
     st.stop()
 
-<<<<<<< HEAD
-resp = requests.get(f"{API_BASE}/pairs", timeout=30).json()
-pairs = resp.get("pairs", ["binance:BTC/USDT"])
-=======
 @st.cache_data(ttl=300)
-def fetch(endpoint: str, params: Optional[dict] = None) -> Optional[pd.DataFrame]:
-    url = f"{API_BASE}/{endpoint}"
+def fetch_pairs() -> list[str]:
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        if "data" in data and isinstance(data["data"], list):
-            return pd.DataFrame(data["data"])
-        else:
-            st.warning(f"No data found for endpoint: {endpoint}")
-            return None
+        resp = requests.get(f"{API_BASE}/pairs", timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("pairs", ["binance:BTC/USDT"])
     except Exception as e:
-        st.error(f"Error fetching {endpoint}: {e}")
+        st.error(f"Error fetching pairs: {e}")
+        return ["binance:BTC/USDT"]
+
+@st.cache_data(ttl=300)
+def fetch_timeseries(metric: str, pair: str, limit: int = 500) -> Optional[pd.DataFrame]:
+    qs = urlencode({"pair": pair, "limit": limit})
+    url = f"{API_BASE}/timeseries/{metric}?{qs}"
+    try:
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
+        payload = r.json()
+        rows = payload.get("rows", [])
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        if "ts" in df.columns:
+            df["ts"] = pd.to_datetime(df["ts"], utc=True)
+            df = df.set_index("ts")
+        return df
+    except Exception as e:
+        st.error(f"Error fetching timeseries {metric}: {e}")
         return None
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
+
+@st.cache_data(ttl=120)
+def fetch_signals(pairs: list[str]) -> dict:
+    try:
+        qs = "?pairs=" + ",".join(pairs) if pairs else ""
+        r = requests.get(f"{API_BASE}/signals{qs}", timeout=20)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        st.error(f"Error fetching signals: {e}")
+        return {}
 
 # Refresh button to clear cache
 if st.button("Refresh Data"):
-    fetch.clear()
+    fetch_pairs.clear()
+    fetch_timeseries.clear()
+    fetch_signals.clear()
 
-<<<<<<< HEAD
-def fetch(metric, pair, limit=500):
-    qs = urlencode({"pair": pair, "limit": limit})
-    r = requests.get(f"{API_BASE}/timeseries/{metric}?{qs}", timeout=30)
-    return r.json()
-
-def get_signals(pairs=None):
-    qs = "?pairs=" + ",".join(pairs) if pairs else ""
-    r = requests.get(f"{API_BASE}/signals{qs}", timeout=30)
-    return r.json()
-
-sig = get_signals([pair])
-signals = sig.get("signals", {})
-explanations = sig.get("explanations", {})
-
-st.subheader("Hot Signals")
-if signals.get(pair):
-    s = signals[pair]
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("Market Regime", s.get("regime","—"))
-    with c2: st.metric("Bias", s.get("bias","—"))
-    with c3: st.metric("Long Prob. %", round(100*s.get("long_prob",0),1))
-    with c4: st.metric("Short Prob. %", round(100*s.get("short_prob",0),1))
-    st.info(s.get("summary",""))
-=======
-pairs_df = fetch("pairs")
+pairs = fetch_pairs()
 pair = None
-if pairs_df is not None and not pairs_df.empty:
-    pair = st.selectbox("Select trading pair", pairs_df["pair"].unique())
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
+if pairs:
+    pair = st.selectbox("Select trading pair", pairs, index=0)
 else:
     st.warning("No trading pairs available from API.")
 
@@ -137,53 +117,68 @@ limit = 1000
 
 st.subheader(f"Data for Pair: {pair}")
 
-data_tabs = st.tabs(["Candles", "Funding Rates", "Open Interest", "Volatility", "Sentiment", "Signals"])
+sig_payload = fetch_signals([pair]) or {}
+signals_map = sig_payload.get("signals", {})
+explanations = sig_payload.get("explanations", {})
+
+st.subheader("Hot Signals")
+if pair in signals_map:
+    s = signals_map[pair]
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Market Regime", s.get("regime", "Unknown"))
+    with c2:
+        st.metric("Bias", s.get("bias", "Neutral"))
+    with c3:
+        st.metric("Long Prob. %", round(100 * float(s.get("long_prob", 0)), 1))
+    with c4:
+        st.metric("Short Prob. %", round(100 * float(s.get("short_prob", 0)), 1))
+    if s.get("summary"):
+        st.info(s["summary"])
+else:
+    st.write("No signal for selected pair yet.")
+
+data_tabs = st.tabs(["Candles", "Funding", "Open Interest", "Volatility", "Sentiment"]) 
 
 with data_tabs[0]:
-    candles = fetch("candles", params={"pair": pair, "limit": limit})
+    candles = fetch_timeseries("candles", pair=pair, limit=limit)
     if candles is not None and not candles.empty:
-        st.line_chart(candles.set_index("ts")[["open", "high", "low", "close"]])
+        st.line_chart(candles[["open", "high", "low", "close"]])
     else:
         st.write("No candles data available.")
 
 with data_tabs[1]:
-    funding = fetch("funding", params={"pair": pair, "limit": limit})
+    funding = fetch_timeseries("funding", pair=pair, limit=limit)
     if funding is not None and not funding.empty:
-        st.line_chart(funding.set_index("ts")["funding_rate"])
+        col = "rate" if "rate" in funding.columns else funding.columns[-1]
+        st.line_chart(funding[col])
     else:
         st.write("No funding rate data available.")
 
 with data_tabs[2]:
-    oi = fetch("open_interest", params={"pair": pair, "limit": limit})
+    oi = fetch_timeseries("oi", pair=pair, limit=limit)
     if oi is not None and not oi.empty:
-        st.line_chart(oi.set_index("ts")["open_interest"])
+        col = "value_usd" if "value_usd" in oi.columns else oi.columns[-1]
+        st.line_chart(oi[col])
     else:
         st.write("No open interest data available.")
 
 with data_tabs[3]:
-    vol = fetch("volatility", params={"pair": pair, "limit": limit})
+    vol = fetch_timeseries("vol", pair=pair, limit=limit)
     if vol is not None and not vol.empty:
-        st.line_chart(vol.set_index("ts")["atr"])
+        col = "atr" if "atr" in vol.columns else vol.columns[-1]
+        st.line_chart(vol[col])
     else:
         st.write("No volatility data available.")
 
 with data_tabs[4]:
-    sentiment = fetch("sentiment", params={"pair": pair, "limit": limit})
+    sentiment = fetch_timeseries("sentiment", pair=pair, limit=limit)
     if sentiment is not None and not sentiment.empty:
-        st.line_chart(sentiment.set_index("ts")["sentiment_score"])
+        col = "score_norm" if "score_norm" in sentiment.columns else sentiment.columns[-1]
+        st.line_chart(sentiment[col])
     else:
         st.write("No sentiment data available.")
 
-<<<<<<< HEAD
 st.divider()
-st.caption("Configure pairs & scheduler in `.env`. Add API keys for live data.")
-=======
-with data_tabs[5]:
-    signals = fetch("signals", params={"pair": pair})
-    if signals is not None and not signals.empty:
-        st.write(signals)
-    else:
-        st.write("No signals data available.")
+st.caption("Configure pairs & scheduler in .env. Add API keys for live data.")
 
-st.caption("Configure pairs, scheduler, and API keys in your .env file or Render.com environment settings.")
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
