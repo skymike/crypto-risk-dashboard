@@ -118,6 +118,8 @@ The worker runs via GitHub Actions to keep costs low (GitHub Actions free tier).
 - `DATABASE_URL`: PostgreSQL connection string (from GitHub Secrets)
 - `SYMBOLS`: Trading pairs (set in workflow file; defaults to top 30)
 - `SCHEDULE_MINUTES`: Worker schedule interval (set in workflow file)
+- `TELEGRAM_BOT_TOKEN`: *(optional)* Telegram bot token for alerting top signals
+- `TELEGRAM_CHAT_ID`: *(optional)* Destination chat/channel ID for Telegram notifications
 
 ## Troubleshooting
 

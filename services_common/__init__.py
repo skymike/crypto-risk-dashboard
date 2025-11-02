@@ -14,7 +14,7 @@ if str(_repo_root) not in sys.path:
 # Import services.common modules and make them available as services_common.*
 # Do this eagerly so modules are available immediately
 _common_modules = [
-    'config', 'db', 'ingest', 'signals', 'schema'
+    'config', 'db', 'ingest', 'signals', 'schema', 'notifications'
 ]
 
 for mod_name in _common_modules:

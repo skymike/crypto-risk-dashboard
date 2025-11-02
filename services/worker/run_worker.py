@@ -23,6 +23,7 @@ try:
     from services.common.db import ensure_schema
     from services.common.ingest import run_ingest_cycle
     from services.common.signals import compute_all_signals
+    from services.common.notifications import maybe_notify_top_signals
     print("[DEBUG] Successfully imported from services.common", file=sys.stderr)
 except ImportError as e:
     print(f"[DEBUG] Import error: {e}", file=sys.stderr)
@@ -36,6 +37,8 @@ def main():
     run_ingest_cycle()
     print("[worker] Computing signals...")
     compute_all_signals()
+    print("[worker] Sending notifications (if configured)...")
+    maybe_notify_top_signals()
     print("[worker] Worker cycle completed successfully!")
 
 if __name__ == "__main__":
