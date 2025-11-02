@@ -1,14 +1,7 @@
-<<<<<<< HEAD
--- Enable Timescale if available
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-
--- Convert base tables to hypertables
-=======
 -- Enable TimescaleDB extension if available
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- Convert base tables to hypertables if not already
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
 SELECT create_hypertable('candles', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('funding_rates', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('open_interest', 'ts', if_not_exists => TRUE);
@@ -16,9 +9,6 @@ SELECT create_hypertable('volatility', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('sentiment', 'ts', if_not_exists => TRUE);
 SELECT create_hypertable('signals', 'ts', if_not_exists => TRUE);
 
-<<<<<<< HEAD
--- Example continuous aggregate for faster OHLC queries
-=======
 -- Add indexes for faster filtering by 'pair'
 CREATE INDEX IF NOT EXISTS idx_candles_pair_ts ON candles (pair, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_funding_rates_pair_ts ON funding_rates (pair, ts DESC);
@@ -28,7 +18,6 @@ CREATE INDEX IF NOT EXISTS idx_sentiment_pair_ts ON sentiment (pair, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_signals_pair_ts ON signals (pair, ts DESC);
 
 -- Create continuous aggregate for candles 1-hour data with auto-refresh
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
 CREATE MATERIALIZED VIEW IF NOT EXISTS candles_1h
 WITH (timescaledb.continuous) AS
 SELECT
@@ -42,11 +31,7 @@ SELECT
 FROM candles
 GROUP BY 1, 2;
 
-<<<<<<< HEAD
--- Auto-refresh policy
-=======
 -- Add continuous aggregate refresh policy for candles_1h
->>>>>>> efba0ff1a8135bf80abb9945756f7a5ac17dfcb8
 SELECT add_continuous_aggregate_policy(
     'candles_1h',
     start_offset => INTERVAL '3 days',
