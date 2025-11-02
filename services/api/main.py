@@ -1,6 +1,11 @@
-from fastapi import FastAPI, Query
-from services_common.db import fetch_df
-from services_common.signals import latest_signals_for_pairs, signal_explanations
+from fastapi import FastAPI, Query, BackgroundTasks
+from services_common.db import fetch_df, ensure_schema
+from services_common.ingest import run_ingest_cycle
+from services_common.signals import (
+    latest_signals_for_pairs,
+    signal_explanations,
+    compute_all_signals,
+)
 from services_common.config import load_config
 
 app = FastAPI(title="Crypto Risk API", version="0.2.0")
@@ -19,6 +24,17 @@ def get_signals(pairs: str | None = Query(None)):
     pairs_list = [p.strip() for p in pairs.split(",")] if pairs else cfg.symbols
     data = latest_signals_for_pairs(pairs_list)
     return {"signals": data, "explanations": signal_explanations()}
+
+def _run_manual_cycle():
+    ensure_schema()
+    run_ingest_cycle()
+    compute_all_signals()
+
+@app.post("/ingest")
+def manual_ingest(background_tasks: BackgroundTasks):
+    """Trigger a best-effort ingest cycle in the background."""
+    background_tasks.add_task(_run_manual_cycle)
+    return {"status": "queued", "message": "Manual ingest started in background."}
 
 @app.get("/timeseries/{metric}")
 def timeseries(metric: str, pair: str, limit: int = 500):

@@ -153,6 +153,17 @@ def fetch_signals(pairs: list[str]) -> dict:
         st.error(f"Error fetching signals: {e}")
         return {}
 
+def trigger_manual_ingest() -> tuple[bool, str]:
+    """Call the API endpoint to trigger a one-off ingest cycle."""
+    try:
+        resp = requests.post(f"{API_BASE}/ingest", timeout=10)
+        resp.raise_for_status()
+        payload = resp.json() if resp.headers.get("content-type","").startswith("application/json") else {}
+        message = payload.get("message") or "Manual ingest triggered. Give it a few seconds to populate."
+        return True, message
+    except Exception as exc:
+        return False, str(exc)
+
 
 COINGECKO_IDS = {
     "BTC": "bitcoin",
@@ -163,6 +174,19 @@ COINGECKO_IDS = {
     "ADA": "cardano",
     "DOGE": "dogecoin",
     "AVAX": "avalanche-2",
+    "DOT": "polkadot",
+    "LINK": "chainlink",
+}
+
+COINCAP_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "BNB": "binance-coin",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche",
     "DOT": "polkadot",
     "LINK": "chainlink",
 }
@@ -211,13 +235,79 @@ def fetch_market_snapshot(pairs: list[str]) -> dict[str, dict]:
         st.warning(f"Unable to fetch live market snapshot: {exc}")
         return {}
 
+@st.cache_data(ttl=600)
+def fetch_fear_greed() -> Optional[dict]:
+    try:
+        resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("data"):
+            return None
+        entry = data["data"][0]
+        return {
+            "value": float(entry.get("value", 0)),
+            "classification": entry.get("value_classification", "n/a"),
+            "updated": entry.get("timestamp"),
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=180)
+def fetch_asset_flows(pairs: list[str]) -> dict[str, dict]:
+    symbols = extract_base_symbols(pairs)
+    ids = [COINCAP_IDS[s] for s in symbols if s in COINCAP_IDS]
+    if not ids:
+        return {}
+    try:
+        resp = requests.get(
+            "https://api.coincap.io/v2/assets",
+            params={"ids": ",".join(ids)},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        out: dict[str, dict] = {}
+        for asset in data:
+            symbol = asset.get("symbol")
+            if not symbol:
+                continue
+            try:
+                out[symbol.upper()] = {
+                    "price": float(asset.get("priceUsd") or 0),
+                    "volume": float(asset.get("volumeUsd24Hr") or 0),
+                    "change": float(asset.get("changePercent24Hr") or 0),
+                    "market_cap": float(asset.get("marketCapUsd") or 0),
+                }
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception:
+        return {}
 
 # Refresh button to clear cache
-if st.button("Refresh Data", use_container_width=True):
-    fetch_pairs.clear()
-    fetch_timeseries.clear()
-    fetch_signals.clear()
-    fetch_market_snapshot.clear()
+controls = st.columns([1, 1, 3])
+with controls[0]:
+    if st.button("Refresh Data", use_container_width=True):
+        fetch_pairs.clear()
+        fetch_timeseries.clear()
+        fetch_signals.clear()
+        fetch_market_snapshot.clear()
+        fetch_fear_greed.clear()
+        fetch_asset_flows.clear()
+with controls[1]:
+    if st.button("Manual Data Pull", use_container_width=True):
+        with st.spinner("Triggering worker ingest…"):
+            ok, msg = trigger_manual_ingest()
+        if ok:
+            fetch_pairs.clear()
+            fetch_timeseries.clear()
+            fetch_signals.clear()
+            fetch_market_snapshot.clear()
+            fetch_fear_greed.clear()
+            fetch_asset_flows.clear()
+            st.success(msg)
+        else:
+            st.error(f"Manual ingest failed: {msg}")
 
 pairs = fetch_pairs()
 pair = None
@@ -267,6 +357,55 @@ if market_snapshot:
                 """,
                 unsafe_allow_html=True,
             )
+
+macro = st.columns(2)
+with macro[0]:
+    fg = fetch_fear_greed()
+    if fg:
+        fg_color = "#22c55e" if fg["value"] >= 50 else "#f97316" if fg["value"] >= 25 else "#ef4444"
+        st.markdown(
+            f"""
+            <div class="rounded-card">
+                <div style="font-size:0.9rem;color:#cdd4ff;">Fear &amp; Greed Index</div>
+                <div style="font-size:2.4rem;font-weight:700;color:{fg_color};margin:0.3rem 0;">
+                    {fg["value"]:.0f}
+                </div>
+                <div style="font-size:1rem;color:#e0e7ff;">{fg["classification"]}</div>
+                <div style="font-size:0.75rem;color:#94a3b8;margin-top:0.6rem;">Source: alternative.me</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("Fear & Greed data is temporarily unavailable.")
+
+with macro[1]:
+    flows = fetch_asset_flows(pairs)
+    if flows:
+        sorted_rows = sorted(flows.items(), key=lambda kv: kv[1]["volume"], reverse=True)
+        top_rows = sorted_rows[:3]
+        items = []
+        for symbol, info in top_rows:
+            vol = info["volume"]
+            change = info["change"]
+            price = info["price"]
+            items.append(
+                f"""
+                <div style="margin-bottom:0.8rem;">
+                    <div style="font-size:0.95rem;color:#cdd4ff;">{symbol}</div>
+                    <div style="font-size:1.4rem;font-weight:700;">{price:,.2f} USD</div>
+                    <div style="font-size:0.85rem;color:#94a3b8;">
+                        24h Vol: {vol/1_000_000:,.1f}M • Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
+                    </div>
+                </div>
+                """
+            )
+        st.markdown(
+            "<div class=\"rounded-card\">" + "".join(items) + "<div style=\"font-size:0.75rem;color:#94a3b8;\">Source: coincap.io</div></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("CoinCap asset metrics unavailable right now.")
 
 st.subheader("Hot Signals")
 if pair in signals_map:

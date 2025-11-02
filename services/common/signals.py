@@ -1,5 +1,5 @@
 import pandas as pd
-from services.common.db import fetch_df, upsert_many
+from services.common.db import fetch_df, upsert_many, execute
 
 def _percentile(series: pd.Series, value: float):
     if series.empty:
@@ -95,7 +95,12 @@ def compute_all_signals():
         "long_prob": s["long_prob"], "short_prob": s["short_prob"], "summary": s["summary"]
     } for s in out]
     if rows:
-        upsert_many("signals", rows, ["id"], [])
+        sql = """
+        INSERT INTO signals (ts, pair, regime, bias, long_prob, short_prob, summary)
+        VALUES (%(ts)s, %(pair)s, %(regime)s, %(bias)s, %(long_prob)s, %(short_prob)s, %(summary)s)
+        """
+        for row in rows:
+            execute(sql, row)
 
 def latest_signals_for_pairs(pairs: list[str]):
     placeholders = ",".join(["%s"]*len(pairs))

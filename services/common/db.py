@@ -1,5 +1,5 @@
 import os, psycopg2, pandas as pd
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_values, Json
 from services.common.config import load_config
 
 _cfg = load_config()
@@ -24,14 +24,22 @@ def fetch_df(sql, params=None) -> pd.DataFrame:
 def upsert_many(table: str, rows: list[dict], conflict_cols: list[str], update_cols: list[str]):
     if not rows:
         return
+    def _coerce(value):
+        if isinstance(value, (dict, list)):
+            return Json(value)
+        return value
     cols = list(rows[0].keys())
-    vals = [[r[c] for c in cols] for r in rows]
+    vals = [[_coerce(r[c]) for c in cols] for r in rows]
     on_conflict = ", ".join(conflict_cols)
-    updates = ", ".join([f"{c}=EXCLUDED.{c}" for c in update_cols])
+    if update_cols:
+        updates = ", ".join([f"{c}=EXCLUDED.{c}" for c in update_cols])
+        conflict_clause = f"ON CONFLICT ({on_conflict}) DO UPDATE SET {updates}"
+    else:
+        conflict_clause = f"ON CONFLICT ({on_conflict}) DO NOTHING"
     sql = f"""
     INSERT INTO {table} ({",".join(cols)})
     VALUES %s
-    ON CONFLICT ({on_conflict}) DO UPDATE SET {updates}
+    {conflict_clause}
     """
     with _conn() as conn, conn.cursor() as cur:
         execute_values(cur, sql, vals)
