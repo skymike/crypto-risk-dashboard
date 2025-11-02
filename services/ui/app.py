@@ -2,10 +2,16 @@ import os
 import requests
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from urllib.parse import urlencode
-from typing import Optional
+from typing import Optional, List, Tuple
 import plotly.graph_objects as go
+
+PROFILE_LABELS = {
+    "Aggressive (fast triggers)": "aggressive",
+    "Balanced (default)": "balanced",
+    "Conservative (high confidence)": "conservative",
+}
+DEFAULT_PROFILE_KEY = "balanced"
 
 DEFAULT_CANDIDATES = [
     "https://crypto-risk-api-production.up.railway.app",
@@ -65,20 +71,61 @@ st.markdown(
         box-shadow: 0 18px 35px rgba(15, 23, 42, 0.3);
         margin-bottom: 1.5rem;
     }
+    .snapshot-card {
+        padding: 0.9rem 1.1rem;
+        border-radius: 16px;
+    }
+    .snapshot-symbol {
+        font-size: 0.85rem;
+        color: #cdd4ff;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+    .snapshot-price {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin: 0.25rem 0 0.35rem;
+    }
+    .snapshot-change {
+        font-size: 0.85rem;
+    }
+    .signal-driver {
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        border-radius: 18px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+    }
+    .signal-driver-title {
+        font-size: 0.85rem;
+        letter-spacing: 0.08em;
+        color: #94a3b8;
+        text-transform: uppercase;
+    }
+    .signal-driver-value {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        margin: 0.2rem 0;
+    }
+    .signal-driver-desc {
+        font-size: 0.9rem;
+        color: #cbd5f5;
+    }
     button[data-baseweb="button"],
     div.stButton > button {
         border-radius: 999px !important;
-        border: 1px solid rgba(99, 102, 241, 0.45);
+        border: 1px solid rgba(99, 102, 241, 0.35);
         font-weight: 600;
-        background: linear-gradient(135deg, #f8fafc 0%, #6366f1 50%, #312e81 100%);
-        color: #0f172a;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 12px 24px rgba(79, 70, 229, 0.35);
+        background: #4338ca;
+        color: #f8fafc;
+        box-shadow: 0 10px 20px rgba(67, 56, 202, 0.35);
         text-shadow: none;
     }
     button[data-baseweb="button"]:hover,
     div.stButton > button:hover {
-        filter: brightness(1.05);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 14px 26px rgba(79,70,229,0.45);
+        background: #4f46e5;
+        box-shadow: 0 12px 24px rgba(79, 70, 229, 0.45);
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 999px !important;
@@ -149,10 +196,14 @@ def fetch_timeseries(metric: str, pair: str, limit: int = 500) -> Optional[pd.Da
         return None
 
 @st.cache_data(ttl=120)
-def fetch_signals(pairs: list[str]) -> dict:
+def fetch_signals(pairs: list[str], profile: str) -> dict:
     try:
-        qs = "?pairs=" + ",".join(pairs) if pairs else ""
-        r = requests.get(f"{API_BASE}/signals{qs}", timeout=20)
+        params = {}
+        if pairs:
+            params["pairs"] = ",".join(pairs)
+        if profile:
+            params["profile"] = profile
+        r = requests.get(f"{API_BASE}/signals", params=params, timeout=20)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -256,6 +307,74 @@ def build_aggr_trade_url(pair: str) -> str:
     target = pair.split(":", 1)[-1].replace("/", "").upper()
     return f"https://aggr.trade/?pair={target}"
 
+def summarize_signal_drivers(cache: dict[str, Optional[pd.DataFrame]]) -> List[Tuple[str, str, str]]:
+    drivers: List[Tuple[str, str, str]] = []
+
+    oi = cache.get("oi")
+    if oi is not None and not oi.empty:
+        latest_oi = oi.iloc[-1]
+        latest_val = latest_oi.get("value_usd", latest_oi.iloc[-1] if hasattr(latest_oi, "iloc") else None)
+        if pd.notnull(latest_val):
+            pct = (oi["value_usd"] < latest_val).mean() * 100 if "value_usd" in oi.columns else None
+            desc = "Higher than most of the last 30 days." if pct and pct >= 70 else "Close to typical positioning."
+            if pct and pct <= 35:
+                desc = "Lighter positioning than usual."
+            drivers.append(
+                (
+                    "Open Interest",
+                    f"{latest_val/1_000_000:,.1f}M USD" if latest_val else "n/a",
+                    f"Approx. {pct:.0f}th percentile · {desc}" if pct is not None else desc,
+                )
+            )
+
+    funding = cache.get("funding")
+    if funding is not None and not funding.empty:
+        col = "rate" if "rate" in funding.columns else funding.columns[-1]
+        latest_rate = funding[col].iloc[-1]
+        avg_rate = funding[col].tail(24).mean()
+        sentiment = "longs paying" if latest_rate > 0 else "shorts paying" if latest_rate < 0 else "neutral"
+        drivers.append(
+            (
+                "Funding",
+                f"{latest_rate*10000:+.1f} bps",
+                f"{sentiment}; 24h avg {avg_rate*10000:+.1f} bps.",
+            )
+        )
+
+    candles = cache.get("candles")
+    if candles is not None and not candles.empty:
+        closes = candles["close"]
+        slope = closes.pct_change().rolling(window=12, min_periods=6).mean().iloc[-1]
+        slope_bps = slope * 10000 if pd.notnull(slope) else 0
+        if pd.notnull(slope):
+            direction = "Upside pressure" if slope > 0 else "Downside pressure" if slope < 0 else "Flat momentum"
+            drivers.append(
+                (
+                    "Momentum",
+                    f"{slope_bps:+.1f} bps/hr",
+                    f"{direction} based on the last ~12 hours of closes.",
+                )
+            )
+
+    sentiment_df = cache.get("sentiment")
+    if sentiment_df is not None and not sentiment_df.empty and "keywords" in sentiment_df.columns:
+        latest_kw = sentiment_df["keywords"].dropna().iloc[-1] if not sentiment_df["keywords"].dropna().empty else {}
+        if isinstance(latest_kw, dict):
+            fear_terms = ["liquidation", "margin call", "crash", "dump"]
+            bull_terms = ["rally", "surge", "pump", "bull"]
+            fear_count = sum(latest_kw.get(term, 0) for term in fear_terms)
+            bull_count = sum(latest_kw.get(term, 0) for term in bull_terms)
+            tone = "Bearish chatter dominates." if fear_count > bull_count else "Bullish chatter dominates." if bull_count > fear_count else "Chatter balanced."
+            drivers.append(
+                (
+                    "Headline Tone",
+                    f"Fear {fear_count} vs Bull {bull_count}",
+                    tone,
+                )
+            )
+
+    return drivers
+
 @st.cache_data(ttl=600)
 def fetch_fear_greed() -> Optional[dict]:
     try:
@@ -334,7 +453,10 @@ def fetch_alt_global() -> Optional[dict]:
         return None
 
 # Refresh button to clear cache
-controls = st.columns([1, 1, 3])
+if "selected_profile_key" not in st.session_state:
+    st.session_state["selected_profile_key"] = DEFAULT_PROFILE_KEY
+
+controls = st.columns([1, 1, 1.4])
 with controls[0]:
     if st.button("Refresh Data", use_container_width=True):
         fetch_pairs.clear()
@@ -361,24 +483,38 @@ with controls[1]:
             st.error(f"Manual ingest failed: {msg}")
 
 pairs = fetch_pairs()
-pair = None
-if pairs:
-    pair = st.selectbox("Select trading pair", pairs, index=0, format_func=lambda x: x.replace(":", " · "))
-else:
+if not pairs:
     st.warning("No trading pairs available from API.")
-
-# If no pair selected, stop further processing
-if not pair:
-    st.info("Select a pair to see data.")
     st.stop()
+
+with controls[2]:
+    profile_labels = list(PROFILE_LABELS.keys())
+    current_key = st.session_state.get("selected_profile_key", DEFAULT_PROFILE_KEY)
+    current_label = next((label for label, key in PROFILE_LABELS.items() if key == current_key), profile_labels[1])
+    selected_label = st.selectbox(
+        "Signal profile",
+        profile_labels,
+        index=profile_labels.index(current_label),
+        help="Choose how strict the signal engine should be.",
+    )
+    new_profile_key = PROFILE_LABELS[selected_label]
+    if new_profile_key != current_key:
+        st.session_state["selected_profile_key"] = new_profile_key
+        fetch_signals.clear()
+
+profile_key = st.session_state.get("selected_profile_key", DEFAULT_PROFILE_KEY)
+
+if "selected_pair" not in st.session_state or st.session_state["selected_pair"] not in pairs:
+    st.session_state["selected_pair"] = pairs[0]
+
+pair = st.session_state["selected_pair"]
 
 limit = 1000
 
-st.subheader(f"Data for Pair: {pair}")
-
-sig_payload = fetch_signals([pair]) or {}
+sig_payload = fetch_signals([pair], profile_key) or {}
 signals_map = sig_payload.get("signals", {})
 explanations = sig_payload.get("explanations", {})
+active_profile = sig_payload.get("profile", profile_key)
 
 # Pre-load core time series once so analytics modules can reuse them
 ts_cache: dict[str, Optional[pd.DataFrame]] = {
@@ -405,12 +541,10 @@ if market_snapshot:
             color = "#22c55e" if change is not None and change >= 0 else "#ef4444"
             st.markdown(
                 f"""
-                <div class="rounded-card">
-                    <div style="font-size:0.9rem;color:#cdd4ff;">{symbol}</div>
-                    <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0;">
-                        {price_str}
-                    </div>
-                    <div style="font-size:0.9rem;color:{color}">
+                <div class="rounded-card snapshot-card">
+                    <div class="snapshot-symbol">{symbol}</div>
+                    <div class="snapshot-price">{price_str}</div>
+                    <div class="snapshot-change" style="color:{color};">
                         24h: {delta}
                     </div>
                 </div>
@@ -418,7 +552,7 @@ if market_snapshot:
                 unsafe_allow_html=True,
             )
 
-macro = st.columns([1.2, 1, 1])
+macro = st.columns([0.85, 1, 1])
 with macro[0]:
     fg = fetch_fear_greed()
     if fg:
@@ -427,7 +561,7 @@ with macro[0]:
             go.Indicator(
                 mode="gauge+number",
                 value=fg_val,
-                number={"suffix": " / 100", "font": {"color": "#f1f5ff"}},
+                number={"suffix": " / 100", "font": {"color": "#f1f5ff", "size": 32}},
                 title={"text": f"Fear & Greed · {fg['classification']}", "font": {"color": "#e0e7ff"}},
                 gauge={
                     "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#94a3b8"},
@@ -447,8 +581,8 @@ with macro[0]:
         gauge.update_layout(
             paper_bgcolor="rgba(15, 23, 42, 0.65)",
             font={"color": "#cdd4ff"},
-            height=260,
-            margin=dict(l=10, r=10, t=40, b=0),
+            height=220,
+            margin=dict(l=10, r=10, t=30, b=0),
         )
         st.plotly_chart(gauge, use_container_width=True, config={"displayModeBar": False})
     else:
@@ -511,6 +645,12 @@ with macro[2]:
         st.info("Alternative.me global metrics unavailable right now.")
 
 st.subheader("Hot Signals")
+st.markdown(
+    "Bias scores blend open interest, funding, short-term momentum, and headline tone."
+)
+st.caption(f"Profile: {active_profile.capitalize() if active_profile else profile_key.capitalize()} · Adjust via the selector above to change strictness.")
+drivers = summarize_signal_drivers(ts_cache)
+
 if pair in signals_map:
     s = signals_map[pair]
     c1, c2, c3, c4 = st.columns(4)
@@ -522,10 +662,66 @@ if pair in signals_map:
         st.metric("Long Prob. %", round(100 * float(s.get("long_prob", 0)), 1))
     with c4:
         st.metric("Short Prob. %", round(100 * float(s.get("short_prob", 0)), 1))
-    if s.get("summary"):
-        st.info(s["summary"])
+    summary_text = s.get("summary")
+    if summary_text:
+        bias_lower = s.get("bias", "").lower()
+        callout = st.info
+        if bias_lower == "long":
+            callout = st.success
+        elif bias_lower == "short":
+            callout = st.warning
+        callout(summary_text)
 else:
     st.write("No signal for selected pair yet.")
+
+if drivers:
+    st.markdown("**Signal Drivers**")
+    cols_per_row = 2
+    for i in range(0, len(drivers), cols_per_row):
+        row = drivers[i : i + cols_per_row]
+        columns = st.columns(len(row))
+        for (title, value, desc), col in zip(row, columns):
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="signal-driver">
+                        <div class="signal-driver-title">{title}</div>
+                        <div class="signal-driver-value">{value}</div>
+                        <div class="signal-driver-desc">{desc}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+else:
+    st.markdown(
+        "*Waiting on more data to break down the drivers. Run the worker or refresh once new samples arrive.*"
+    )
+
+if explanations:
+    with st.expander("How this profile scores signals", expanded=False):
+        for key, text in explanations.items():
+            label = key.replace("_", " ").title()
+            st.markdown(f"**{label}:** {text}")
+
+with st.container():
+    selected = st.selectbox(
+        "Select trading pair",
+        pairs,
+        index=pairs.index(pair) if pair in pairs else 0,
+        format_func=lambda x: x.replace(":", " · "),
+        key="selected_pair",
+    )
+    if selected != pair:
+        st.experimental_rerun()
+
+pair = st.session_state.get("selected_pair", pair)
+
+# Ensure we still have a pair after potential selection change
+if not pair:
+    st.info("Select a pair to see data.")
+    st.stop()
+
+st.subheader(f"Data for Pair: {pair}")
 
 visual_tabs = st.tabs(["Price Action", "Funding & OI", "Sentiment", "aggr.trade"])
 
@@ -620,7 +816,9 @@ with visual_tabs[2]:
 
 with visual_tabs[3]:
     st.write("Live liquidation feed via aggr.trade")
-    components.iframe(build_aggr_trade_url(pair), height=640, scrolling=True)
+    aggr_url = build_aggr_trade_url(pair)
+    st.link_button("Open aggr.trade in new tab", aggr_url)
+    st.caption("aggr.trade does not allow in-app embedding, so use the button above to view the live heatmap.")
 
 st.subheader("Insight Modules")
 analysis_tabs = st.tabs(["Funding Overlay", "Volatility Pulse", "Sentiment Radar"])
@@ -658,6 +856,15 @@ with analysis_tabs[0]:
                 margin=dict(l=0, r=0, t=35, b=0),
             )
             st.plotly_chart(fig, use_container_width=True)
+            st.markdown(
+                """
+                **How to read this:**
+                - *Price (norm 100)* scales the first data point to 100 so you can focus on directional drift rather than absolute price.
+                - *Funding (bps)* shows whether longs or shorts are paying; persistent positive funding implies long crowding, negatives imply short crowding.
+                - When funding rises while price stalls or drops, be cautious of long squeezes; the inverse can precede short squeezes.
+                - Look for divergences: price grinding higher while funding cools is healthier than price pumping on aggressive positive funding.
+                """
+            )
 
 with analysis_tabs[1]:
     vol = ts_cache["vol"]
@@ -686,6 +893,16 @@ with analysis_tabs[1]:
         st.plotly_chart(fig, use_container_width=True)
         stats = series.describe().to_frame(name="ATR").T
         st.dataframe(stats)
+        st.markdown(
+            """
+            **How to read this:**
+            - *Latest ATR* shows the current absolute true range (volatility proxy).
+            - *mean / std* help gauge if today's movement is above its recent norm.
+            - A rising *max* or widening *std* often hints at breakout-like conditions.
+            - If the latest ATR is near the lower quartile, conditions are typically calmer (range-trading bias).
+            - When ATR presses into the upper quartile, tighten risk or look for momentum setups.
+            """
+        )
 
 with analysis_tabs[2]:
     sentiment = ts_cache["sentiment"]
@@ -711,6 +928,15 @@ with analysis_tabs[2]:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Latest sentiment entry does not include keyword counts.")
+        st.markdown(
+            """
+            **How to read this:**
+            - Bars show the latest counts of sentiment keywords captured from CryptoPanic headlines.
+            - Liquidity-stress words (e.g., *liquidation*, *margin call*) signal risk-off chatter; bullish words (e.g., *rally*, *surge*) hint at optimism.
+            - Use the mix to contextualise signal bias: a short setup is stronger when bearish terms dominate, and vice versa.
+            - Sudden spikes in any keyword bucket often precede volatility bursts—combine with the Funding overlay for higher conviction.
+            """
+        )
 
 st.divider()
 st.caption("Configure pairs, Telegram alerts, and scheduler in .env. Add API keys for live data.")

@@ -36,7 +36,7 @@ def main():
     print("[worker] Running ingest cycle...")
     run_ingest_cycle()
     print("[worker] Computing signals...")
-    compute_all_signals()
+    compute_all_signals(os.getenv("SIGNAL_PROFILE"))
     print("[worker] Sending notifications (if configured)...")
     maybe_notify_top_signals()
     print("[worker] Worker cycle completed successfully!")

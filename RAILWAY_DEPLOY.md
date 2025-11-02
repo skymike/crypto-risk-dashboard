@@ -11,7 +11,7 @@ This guide provides detailed instructions for deploying the Crypto Risk Dashboar
 ## Architecture
 
 - **Railway Services**: API, UI, and PostgreSQL database
-- **GitHub Actions**: Worker service (runs every 5 minutes)
+- **GitHub Actions**: Worker service (runs every 15 minutes)
 
 ## Deployment Steps
 
@@ -84,7 +84,7 @@ The worker runs via GitHub Actions to keep costs low (GitHub Actions free tier).
 
 3. **Verify Workflow**:
    - Go to Actions tab in GitHub
-   - The "Crypto Data Worker" workflow should run automatically every 5 minutes
+   - The "Crypto Data Worker" workflow should run automatically every 15 minutes
    - You can manually trigger it using "workflow_dispatch"
 
 ### 6. Verify Deployment
@@ -120,6 +120,7 @@ The worker runs via GitHub Actions to keep costs low (GitHub Actions free tier).
 - `SCHEDULE_MINUTES`: Worker schedule interval (set in workflow file)
 - `TELEGRAM_BOT_TOKEN`: *(optional)* Telegram bot token for alerting top signals
 - `TELEGRAM_CHAT_ID`: *(optional)* Destination chat/channel ID for Telegram notifications
+- `SIGNAL_PROFILE`: *(optional)* Default worker profile (`conservative`, `balanced`, or `aggressive`) controlling signal strictness
 
 ## Troubleshooting
 
@@ -168,8 +169,8 @@ railway up
   - Perfect for testing and small deployments
   - May need to upgrade for production traffic
 - **GitHub Actions**: Free tier includes 2,000 minutes/month
-  - Worker runs every 5 minutes = ~8,640 runs/month
-  - Each run takes ~1-2 minutes = ~17,280 minutes/month
+  - Worker runs every 15 minutes = ~2,880 runs/month
+  - Each run takes ~1-2 minutes = ~2,880–5,760 minutes/month
   - May need to optimize or reduce frequency for free tier
 
 ## Updating Services

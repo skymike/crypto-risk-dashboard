@@ -1,8 +1,9 @@
+import os
 from fastapi import FastAPI, Query, BackgroundTasks
 from services_common.db import fetch_df, ensure_schema
 from services_common.ingest import run_ingest_cycle
 from services_common.signals import (
-    latest_signals_for_pairs,
+    compute_market_stress,
     signal_explanations,
     compute_all_signals,
 )
@@ -20,15 +21,24 @@ def pairs():
     return {"pairs": cfg.symbols}
 
 @app.get("/signals")
-def get_signals(pairs: str | None = Query(None)):
+def get_signals(pairs: str | None = Query(None), profile: str = Query("balanced")):
     pairs_list = [p.strip() for p in pairs.split(",")] if pairs else cfg.symbols
-    data = latest_signals_for_pairs(pairs_list)
-    return {"signals": data, "explanations": signal_explanations()}
+    data = {}
+    resolved_profile = None
+    for p in pairs_list:
+        signal = compute_market_stress(p, profile)
+        resolved_profile = resolved_profile or signal.get("profile")
+        data[p] = signal
+    return {
+        "signals": data,
+        "profile": resolved_profile or profile,
+        "explanations": signal_explanations(profile),
+    }
 
 def _run_manual_cycle():
     ensure_schema()
     run_ingest_cycle()
-    compute_all_signals()
+    compute_all_signals(os.getenv("SIGNAL_PROFILE"))
 
 @app.post("/ingest")
 def manual_ingest(background_tasks: BackgroundTasks):
