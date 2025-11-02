@@ -193,8 +193,18 @@ COINCAP_IDS = {
     "ADA": "cardano",
     "DOGE": "dogecoin",
     "AVAX": "avalanche",
+    "TRX": "tron",
     "DOT": "polkadot",
     "LINK": "chainlink",
+    "MATIC": "polygon",
+    "UNI": "uniswap",
+    "APT": "aptos",
+    "ARB": "arbitrum",
+    "ATOM": "cosmos",
+    "OP": "optimism",
+    "SEI": "sei-network",
+    "NEAR": "near",
+    "INJ": "injective-protocol",
 }
 
 
@@ -267,16 +277,20 @@ def fetch_fear_greed() -> Optional[dict]:
 def fetch_asset_flows(pairs: list[str]) -> dict[str, dict]:
     symbols = extract_base_symbols(pairs)
     ids = [COINCAP_IDS[s] for s in symbols if s in COINCAP_IDS]
-    if not ids:
-        return {}
     try:
-        resp = requests.get(
-            "https://api.coincap.io/v2/assets",
-            params={"ids": ",".join(ids)},
-            timeout=10,
-        )
+        params = {"limit": 5}
+        if ids:
+            params = {"ids": ",".join(ids)}
+        resp = requests.get("https://api.coincap.io/v2/assets", params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json().get("data", [])
+        if not data and not ids:
+            return {}
+        if not data and ids:
+            # fallback to global top assets if specific ids missing
+            resp = requests.get("https://api.coincap.io/v2/assets", params={"limit": 5}, timeout=10)
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
         out: dict[str, dict] = {}
         for asset in data:
             symbol = asset.get("symbol")
@@ -404,7 +418,7 @@ if market_snapshot:
                 unsafe_allow_html=True,
             )
 
-macro = st.columns(3)
+macro = st.columns([1.2, 1, 1])
 with macro[0]:
     fg = fetch_fear_greed()
     if fg:
@@ -433,9 +447,10 @@ with macro[0]:
         gauge.update_layout(
             paper_bgcolor="rgba(15, 23, 42, 0.65)",
             font={"color": "#cdd4ff"},
-            margin=dict(l=10, r=10, t=50, b=10),
+            height=260,
+            margin=dict(l=10, r=10, t=40, b=0),
         )
-        st.plotly_chart(gauge, use_container_width=True)
+        st.plotly_chart(gauge, use_container_width=True, config={"displayModeBar": False})
     else:
         st.info("Fear & Greed data is temporarily unavailable.")
 
