@@ -329,6 +329,15 @@ sig_payload = fetch_signals([pair]) or {}
 signals_map = sig_payload.get("signals", {})
 explanations = sig_payload.get("explanations", {})
 
+# Pre-load core time series once so analytics modules can reuse them
+ts_cache: dict[str, Optional[pd.DataFrame]] = {
+    "candles": fetch_timeseries("candles", pair=pair, limit=limit),
+    "funding": fetch_timeseries("funding", pair=pair, limit=limit),
+    "oi": fetch_timeseries("oi", pair=pair, limit=limit),
+    "vol": fetch_timeseries("vol", pair=pair, limit=limit),
+    "sentiment": fetch_timeseries("sentiment", pair=pair, limit=limit),
+}
+
 market_snapshot = fetch_market_snapshot(pairs)
 if market_snapshot:
     st.subheader("Live Market Snapshot")
@@ -386,7 +395,7 @@ with macro[1]:
         top_rows = sorted_rows[:3]
         items = []
         for symbol, info in top_rows:
-            vol = info["volume"]
+            vol_usd = info["volume"]
             change = info["change"]
             price = info["price"]
             items.append(
@@ -395,7 +404,7 @@ with macro[1]:
                     <div style="font-size:0.95rem;color:#cdd4ff;">{symbol}</div>
                     <div style="font-size:1.4rem;font-weight:700;">{price:,.2f} USD</div>
                     <div style="font-size:0.85rem;color:#94a3b8;">
-                        24h Vol: {vol/1_000_000:,.1f}M • Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
+                        24h Vol: {vol_usd/1_000_000:,.1f}M • Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
                     </div>
                 </div>
                 """
@@ -427,14 +436,14 @@ else:
 data_tabs = st.tabs(["Candles", "Funding", "Open Interest", "Volatility", "Sentiment"]) 
 
 with data_tabs[0]:
-    candles = fetch_timeseries("candles", pair=pair, limit=limit)
+    candles = ts_cache["candles"]
     if candles is not None and not candles.empty:
         st.line_chart(candles[["open", "high", "low", "close"]])
     else:
         st.write("No candles data available.")
 
 with data_tabs[1]:
-    funding = fetch_timeseries("funding", pair=pair, limit=limit)
+    funding = ts_cache["funding"]
     if funding is not None and not funding.empty:
         col = "rate" if "rate" in funding.columns else funding.columns[-1]
         st.line_chart(funding[col])
@@ -442,7 +451,7 @@ with data_tabs[1]:
         st.write("No funding rate data available.")
 
 with data_tabs[2]:
-    oi = fetch_timeseries("oi", pair=pair, limit=limit)
+    oi = ts_cache["oi"]
     if oi is not None and not oi.empty:
         col = "value_usd" if "value_usd" in oi.columns else oi.columns[-1]
         st.line_chart(oi[col])
@@ -450,7 +459,7 @@ with data_tabs[2]:
         st.write("No open interest data available.")
 
 with data_tabs[3]:
-    vol = fetch_timeseries("vol", pair=pair, limit=limit)
+    vol = ts_cache["vol"]
     if vol is not None and not vol.empty:
         col = "atr" if "atr" in vol.columns else vol.columns[-1]
         st.line_chart(vol[col])
@@ -458,12 +467,73 @@ with data_tabs[3]:
         st.write("No volatility data available.")
 
 with data_tabs[4]:
-    sentiment = fetch_timeseries("sentiment", pair=pair, limit=limit)
+    sentiment = ts_cache["sentiment"]
     if sentiment is not None and not sentiment.empty:
         col = "score_norm" if "score_norm" in sentiment.columns else sentiment.columns[-1]
         st.line_chart(sentiment[col])
     else:
         st.write("No sentiment data available.")
+
+st.subheader("Insight Modules")
+module_options = {
+    "Funding vs Price Overlay": "overlay",
+    "Volatility Pulse (ATR stats)": "vol_stats",
+    "Sentiment Keyword Heatmap": "sentiment_keywords",
+}
+selected_modules = st.multiselect(
+    "Add-on analytics (select one or more)",
+    list(module_options.keys()),
+    default=["Funding vs Price Overlay"],
+)
+
+for label in selected_modules:
+    module_key = module_options[label]
+    with st.container():
+        st.markdown(f"#### {label}")
+        if module_key == "overlay":
+            candles = ts_cache["candles"]
+            funding = ts_cache["funding"]
+            if candles is None or candles.empty or funding is None or funding.empty:
+                st.info("Need both candles and funding data to build this view.")
+            else:
+                merged = candles[["close"]].join(funding["rate"], how="inner")
+                merged = merged.dropna()
+                if merged.empty:
+                    st.info("Not enough overlapping data for overlay.")
+                else:
+                    scaled = merged.copy()
+                    scaled["close_norm"] = (scaled["close"] / scaled["close"].iloc[0]) * 100
+                    scaled["rate_bps"] = merged["rate"] * 10000
+                    st.line_chart(scaled[["close_norm", "rate_bps"]])
+                    st.caption("Price normalized to 100 (left axis) vs funding rate in basis points (right axis).")
+        elif module_key == "vol_stats":
+            vol = ts_cache["vol"]
+            if vol is None or vol.empty:
+                st.info("Volatility data not available yet.")
+            else:
+                latest = vol.iloc[-1]
+                series = vol["atr"] if "atr" in vol.columns else vol.iloc[:, 0]
+                stats = series.describe()
+                metric_value = float(latest.get("atr", series.iloc[-1]))
+                st.metric("Latest ATR", f"{metric_value:,.2f}")
+                summary = stats.to_frame(name="ATR").T
+                st.dataframe(summary)
+                st.caption("Descriptive statistics of ATR values for the selected window.")
+        elif module_key == "sentiment_keywords":
+            sentiment = ts_cache["sentiment"]
+            if sentiment is None or sentiment.empty or "keywords" not in sentiment.columns:
+                st.info("Sentiment keyword data is not available.")
+            else:
+                latest = sentiment.dropna(subset=["keywords"]).iloc[-1]
+                keywords = latest["keywords"]
+                if isinstance(keywords, dict) and keywords:
+                    df_kw = pd.DataFrame(
+                        {"keyword": list(keywords.keys()), "count": list(keywords.values())}
+                    ).sort_values("count", ascending=False)
+                    st.bar_chart(df_kw.set_index("keyword"))
+                else:
+                    st.info("Latest sentiment entry does not include keyword counts.")
+                st.caption("Counts derived from latest CryptoPanic headlines scrape.")
 
 st.divider()
 st.caption("Configure pairs & scheduler in .env. Add API keys for live data.")

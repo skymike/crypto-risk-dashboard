@@ -36,6 +36,6 @@ jobs:
         # Go to Railway dashboard → PostgreSQL → Variables → Copy DATABASE_URL
         # Add it to GitHub Secrets as DATABASE_URL
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        SYMBOLS: binance:BTC/USDT,binance:ETH/USDT,bybit:SOL/USDT
+        SYMBOLS: binance:BTC/USDT,binance:ETH/USDT,binance:SOL/USDT,binance:BNB/USDT,binance:XRP/USDT,binance:DOGE/USDT,binance:ADA/USDT,binance:AVAX/USDT,binance:TRX/USDT,binance:DOT/USDT,binance:LINK/USDT,binance:MATIC/USDT,binance:UNI/USDT,binance:APT/USDT,binance:ARB/USDT,binance:ATOM/USDT,binance:OP/USDT,binance:SEI/USDT,binance:NEAR/USDT,binance:INJ/USDT,bybit:BTC/USDT,bybit:ETH/USDT,bybit:SOL/USDT,bybit:XRP/USDT,bybit:DOGE/USDT,bybit:ADA/USDT,bybit:LINK/USDT,bybit:MATIC/USDT,bybit:NEAR/USDT,bybit:APT/USDT
         SCHEDULE_MINUTES: 5
       run: python services/worker/run_worker.py

@@ -42,7 +42,7 @@ This guide provides detailed instructions for deploying the Crypto Risk Dashboar
    - Go to "Variables" tab
    - Click "New Variable"
    - `DATABASE_URL`: Click "Reference Variable" → Select your PostgreSQL service → Select `DATABASE_URL`
-   - `SYMBOLS`: `binance:BTC/USDT,binance:ETH/USDT,bybit:SOL/USDT`
+   - `SYMBOLS`: Default includes top 30 perp pairs (e.g., `binance:BTC/USDT,...,bybit:APT/USDT`). Override if you want a smaller slice.
 
 5. **Generate Public URL**:
    - Go to "Settings" → "Networking"
@@ -106,7 +106,7 @@ The worker runs via GitHub Actions to keep costs low (GitHub Actions free tier).
 
 ### API Service
 - `DATABASE_URL`: PostgreSQL connection string (referenced from database service)
-- `SYMBOLS`: Comma-separated trading pairs (e.g., `binance:BTC/USDT,binance:ETH/USDT`)
+- `SYMBOLS`: Comma-separated trading pairs (default top 30, e.g., `binance:BTC/USDT,...,bybit:APT/USDT`)
 - `PORT`: Automatically set by Railway (don't set manually)
 
 ### UI Service
@@ -116,7 +116,7 @@ The worker runs via GitHub Actions to keep costs low (GitHub Actions free tier).
 
 ### Worker (GitHub Actions)
 - `DATABASE_URL`: PostgreSQL connection string (from GitHub Secrets)
-- `SYMBOLS`: Trading pairs (set in workflow file)
+- `SYMBOLS`: Trading pairs (set in workflow file; defaults to top 30)
 - `SCHEDULE_MINUTES`: Worker schedule interval (set in workflow file)
 
 ## Troubleshooting

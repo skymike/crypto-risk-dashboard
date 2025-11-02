@@ -12,7 +12,17 @@ class Config:
     symbols: list[str]
 
 def load_config() -> Config:
-    symbols_env = os.getenv("SYMBOLS", "binance:BTC/USDT")
+    default_symbols = (
+        "binance:BTC/USDT,binance:ETH/USDT,binance:SOL/USDT,binance:BNB/USDT,"
+        "binance:XRP/USDT,binance:DOGE/USDT,binance:ADA/USDT,binance:AVAX/USDT,"
+        "binance:TRX/USDT,binance:DOT/USDT,binance:LINK/USDT,binance:MATIC/USDT,"
+        "binance:UNI/USDT,binance:APT/USDT,binance:ARB/USDT,binance:ATOM/USDT,"
+        "binance:OP/USDT,binance:SEI/USDT,binance:NEAR/USDT,binance:INJ/USDT,"
+        "bybit:BTC/USDT,bybit:ETH/USDT,bybit:SOL/USDT,bybit:XRP/USDT,"
+        "bybit:DOGE/USDT,bybit:ADA/USDT,bybit:LINK/USDT,bybit:MATIC/USDT,"
+        "bybit:NEAR/USDT,bybit:APT/USDT"
+    )
+    symbols_env = os.getenv("SYMBOLS", default_symbols)
     symbols = [s.strip() for s in symbols_env.split(",") if s.strip()]
     return Config(
         pg_user=os.getenv("POSTGRES_USER","cryptouser"),
