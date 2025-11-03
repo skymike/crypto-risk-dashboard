@@ -735,10 +735,10 @@ with st.expander("Hot Signals", expanded=True):
         )
 
     if explanations:
-        with st.expander("How this profile scores signals", expanded=False):
-            for key, text in explanations.items():
-                label = key.replace("_", " ").title()
-                st.markdown(f"**{label}:** {text}")
+        st.markdown("**Scoring Notes**")
+        for key, note in explanations.items():
+            label = key.replace("_", " ").title()
+            st.markdown(f"- **{label}:** {note}")
 
 with st.container():
     selected = st.selectbox(
