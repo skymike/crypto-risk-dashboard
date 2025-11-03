@@ -1,6 +1,9 @@
 import os
-import requests
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pandas as pd
+import requests
 import streamlit as st
 from urllib.parse import urlencode
 from typing import Optional, List, Tuple
@@ -12,6 +15,7 @@ PROFILE_LABELS = {
     "Conservative (high confidence)": "conservative",
 }
 DEFAULT_PROFILE_KEY = "balanced"
+LOCAL_TZ = ZoneInfo("Europe/Amsterdam")
 
 DEFAULT_CANDIDATES = [
     "https://crypto-risk-api-production.up.railway.app",
@@ -112,6 +116,25 @@ st.markdown(
         font-size: 0.9rem;
         color: #cbd5f5;
     }
+    .signal-pill {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 16px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .signal-pill-title {
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #94a3b8;
+    }
+    .signal-pill-value {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        line-height: 1.1;
+    }
     button[data-baseweb="button"],
     div.stButton > button {
         border-radius: 999px !important;
@@ -153,6 +176,10 @@ st.markdown(
 st.title("Crypto Risk Dashboard")
 st.caption("Graphs, Meters, and Hot Signals")
 
+st.caption(
+    f"Live time: {datetime.now(LOCAL_TZ).strftime('%d %b %Y · %H:%M:%S')} (GMT+1 Amsterdam)"
+)
+
 if not API_BASE:
     st.error("Could not locate the API automatically.")
     manual = st.text_input("Enter your API base URL (e.g., https://crypto-risk-api-production.up.railway.app)")
@@ -189,7 +216,7 @@ def fetch_timeseries(metric: str, pair: str, limit: int = 500) -> Optional[pd.Da
         df = pd.DataFrame(rows)
         if "ts" in df.columns:
             df["ts"] = pd.to_datetime(df["ts"], utc=True)
-            df = df.set_index("ts")
+            df = df.set_index("ts").tz_convert(LOCAL_TZ)
         return df
     except Exception as e:
         st.error(f"Error fetching timeseries {metric}: {e}")
@@ -526,182 +553,192 @@ ts_cache: dict[str, Optional[pd.DataFrame]] = {
 }
 
 market_snapshot = fetch_market_snapshot(pairs)
-if market_snapshot:
-    st.subheader("Live Market Snapshot")
-    cards = st.columns(min(4, len(market_snapshot)))
-    idx = 0
-    for symbol, data in market_snapshot.items():
-        col = cards[idx % len(cards)]
-        idx += 1
-        with col:
-            price = data.get("price")
-            change = data.get("change")
-            delta = f"{change:+.2f}%" if change is not None else "n/a"
-            price_str = f"{price:,.2f} USD" if price is not None else "n/a"
-            color = "#22c55e" if change is not None and change >= 0 else "#ef4444"
+with st.expander("Live Market Snapshot", expanded=True):
+    if market_snapshot:
+        snapshot_rows = []
+        for symbol, data in market_snapshot.items():
+            snapshot_rows.append(
+                {
+                    "Symbol": symbol,
+                    "Price (USD)": data.get("price"),
+                    "24h Δ %": data.get("change"),
+                    "Updated": datetime.now(LOCAL_TZ).strftime("%d %b %Y %H:%M"),
+                }
+            )
+        snapshot_df = pd.DataFrame(snapshot_rows).set_index("Symbol")
+        styled = snapshot_df.style.format({
+            "Price (USD)": "{:.2f}",
+            "24h Δ %": "{:+.2f}%",
+        }).background_gradient(
+            subset=["24h Δ %"], cmap="RdYlGn"
+        )
+        st.dataframe(styled, use_container_width=True, height=220)
+    else:
+        st.info("No market snapshot data available yet. Refresh once the worker ingests more data.")
+
+with st.expander("Macro Context", expanded=True):
+    macro = st.columns([0.85, 1, 1])
+    with macro[0]:
+        fg = fetch_fear_greed()
+        if fg:
+            fg_val = float(fg["value"])
+            gauge = go.Figure(
+                go.Indicator(
+                    mode="gauge+number",
+                    value=fg_val,
+                    number={"suffix": " / 100", "font": {"color": "#f1f5ff", "size": 32}},
+                    title={"text": f"Fear & Greed · {fg['classification']}", "font": {"color": "#e0e7ff"}},
+                    gauge={
+                        "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#94a3b8"},
+                        "bar": {"color": "#a855f7"},
+                        "bgcolor": "#0f172a",
+                        "borderwidth": 1,
+                        "bordercolor": "#6366f1",
+                        "steps": [
+                            {"range": [0, 25], "color": "#7f1d1d"},
+                            {"range": [25, 50], "color": "#b45309"},
+                            {"range": [50, 75], "color": "#1f2937"},
+                            {"range": [75, 100], "color": "#065f46"},
+                        ],
+                    },
+                )
+            )
+            gauge.update_layout(
+                paper_bgcolor="rgba(15, 23, 42, 0.65)",
+                font={"color": "#cdd4ff"},
+                height=220,
+                margin=dict(l=10, r=10, t=30, b=0),
+            )
+            st.plotly_chart(gauge, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.info("Fear & Greed data is temporarily unavailable.")
+
+    with macro[1]:
+        flows = fetch_asset_flows(pairs)
+        if flows:
+            sorted_rows = sorted(flows.items(), key=lambda kv: kv[1]["volume"], reverse=True)
+            top_rows = sorted_rows[:3]
+            items = []
+            for symbol, info in top_rows:
+                vol_usd = info["volume"]
+                change = info["change"]
+                price = info["price"]
+                items.append(
+                    f"""
+                    <div style="margin-bottom:0.8rem;">
+                        <div style="font-size:0.95rem;color:#cdd4ff;">{symbol}</div>
+                        <div style="font-size:1.4rem;font-weight:700;">{price:,.2f} USD</div>
+                        <div style="font-size:0.85rem;color:#94a3b8;">
+                            24h Vol: {vol_usd/1_000_000:,.1f}M • Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
+                        </div>
+                    </div>
+                    """
+                )
+            st.markdown(
+                "<div class=\"rounded-card\">" + "".join(items) + "<div style=\"font-size:0.75rem;color:#94a3b8;\">Source: coincap.io</div></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info("CoinCap asset metrics unavailable right now.")
+
+    with macro[2]:
+        global_data = fetch_alt_global()
+        if global_data:
+            mc = global_data["market_cap"] / 1_000_000_000 if global_data["market_cap"] else 0
+            vol = global_data["volume"] / 1_000_000_000 if global_data["volume"] else 0
+            dom = global_data["btc_dominance"]
+            change = global_data["market_cap_change"]
             st.markdown(
                 f"""
-                <div class="rounded-card snapshot-card">
-                    <div class="snapshot-symbol">{symbol}</div>
-                    <div class="snapshot-price">{price_str}</div>
-                    <div class="snapshot-change" style="color:{color};">
-                        24h: {delta}
+                <div class="rounded-card">
+                    <div style="font-size:0.9rem;color:#cdd4ff;">Global Market Overview</div>
+                    <div style="font-size:1.3rem;font-weight:700;margin:0.4rem 0 0;">
+                        MC: {mc:,.1f}B · 24h Vol: {vol:,.1f}B
                     </div>
+                    <div style="font-size:0.95rem;color:#e0e7ff;margin-top:0.3rem;">
+                        BTC Dominance: {dom:.1f}% · Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
+                    </div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:0.4rem;">
+                        Active Assets: {global_data['active_cryptos']} · Markets: {global_data['active_markets']}
+                    </div>
+                    <div style="font-size:0.7rem;color:#64748b;margin-top:0.6rem;">Source: alternative.me</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+        else:
+            st.info("Alternative.me global metrics unavailable right now.")
 
-macro = st.columns([0.85, 1, 1])
-with macro[0]:
-    fg = fetch_fear_greed()
-    if fg:
-        fg_val = float(fg["value"])
-        gauge = go.Figure(
-            go.Indicator(
-                mode="gauge+number",
-                value=fg_val,
-                number={"suffix": " / 100", "font": {"color": "#f1f5ff", "size": 32}},
-                title={"text": f"Fear & Greed · {fg['classification']}", "font": {"color": "#e0e7ff"}},
-                gauge={
-                    "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#94a3b8"},
-                    "bar": {"color": "#a855f7"},
-                    "bgcolor": "#0f172a",
-                    "borderwidth": 1,
-                    "bordercolor": "#6366f1",
-                    "steps": [
-                        {"range": [0, 25], "color": "#7f1d1d"},
-                        {"range": [25, 50], "color": "#b45309"},
-                        {"range": [50, 75], "color": "#1f2937"},
-                        {"range": [75, 100], "color": "#065f46"},
-                    ],
-                },
-            )
-        )
-        gauge.update_layout(
-            paper_bgcolor="rgba(15, 23, 42, 0.65)",
-            font={"color": "#cdd4ff"},
-            height=220,
-            margin=dict(l=10, r=10, t=30, b=0),
-        )
-        st.plotly_chart(gauge, use_container_width=True, config={"displayModeBar": False})
-    else:
-        st.info("Fear & Greed data is temporarily unavailable.")
+with st.expander("Hot Signals", expanded=True):
+    st.subheader("Hot Signals")
+    st.markdown(
+        "Bias scores blend open interest, funding, short-term momentum, and headline tone."
+    )
+    st.caption(
+        f"Profile: {active_profile.capitalize() if active_profile else profile_key.capitalize()} · Adjust via the selector above to change strictness."
+    )
+    drivers = summarize_signal_drivers(ts_cache)
 
-with macro[1]:
-    flows = fetch_asset_flows(pairs)
-    if flows:
-        sorted_rows = sorted(flows.items(), key=lambda kv: kv[1]["volume"], reverse=True)
-        top_rows = sorted_rows[:3]
-        items = []
-        for symbol, info in top_rows:
-            vol_usd = info["volume"]
-            change = info["change"]
-            price = info["price"]
-            items.append(
-                f"""
-                <div style="margin-bottom:0.8rem;">
-                    <div style="font-size:0.95rem;color:#cdd4ff;">{symbol}</div>
-                    <div style="font-size:1.4rem;font-weight:700;">{price:,.2f} USD</div>
-                    <div style="font-size:0.85rem;color:#94a3b8;">
-                        24h Vol: {vol_usd/1_000_000:,.1f}M • Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
-                    </div>
-                </div>
-                """
-            )
-        st.markdown(
-            "<div class=\"rounded-card\">" + "".join(items) + "<div style=\"font-size:0.75rem;color:#94a3b8;\">Source: coincap.io</div></div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("CoinCap asset metrics unavailable right now.")
-
-with macro[2]:
-    global_data = fetch_alt_global()
-    if global_data:
-        mc = global_data["market_cap"] / 1_000_000_000 if global_data["market_cap"] else 0
-        vol = global_data["volume"] / 1_000_000_000 if global_data["volume"] else 0
-        dom = global_data["btc_dominance"]
-        change = global_data["market_cap_change"]
-        st.markdown(
-            f"""
-            <div class="rounded-card">
-                <div style="font-size:0.9rem;color:#cdd4ff;">Global Market Overview</div>
-                <div style="font-size:1.3rem;font-weight:700;margin:0.4rem 0 0;">
-                    MC: {mc:,.1f}B · 24h Vol: {vol:,.1f}B
-                </div>
-                <div style="font-size:0.95rem;color:#e0e7ff;margin-top:0.3rem;">
-                    BTC Dominance: {dom:.1f}% · Change: <span style="color:{'#22c55e' if change >=0 else '#ef4444'}">{change:+.2f}%</span>
-                </div>
-                <div style="font-size:0.8rem;color:#94a3b8;margin-top:0.4rem;">
-                    Active Assets: {global_data['active_cryptos']} · Markets: {global_data['active_markets']}
-                </div>
-                <div style="font-size:0.7rem;color:#64748b;margin-top:0.6rem;">Source: alternative.me</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("Alternative.me global metrics unavailable right now.")
-
-st.subheader("Hot Signals")
-st.markdown(
-    "Bias scores blend open interest, funding, short-term momentum, and headline tone."
-)
-st.caption(f"Profile: {active_profile.capitalize() if active_profile else profile_key.capitalize()} · Adjust via the selector above to change strictness.")
-drivers = summarize_signal_drivers(ts_cache)
-
-if pair in signals_map:
-    s = signals_map[pair]
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Market Regime", s.get("regime", "Unknown"))
-    with c2:
-        st.metric("Bias", s.get("bias", "Neutral"))
-    with c3:
-        st.metric("Long Prob. %", round(100 * float(s.get("long_prob", 0)), 1))
-    with c4:
-        st.metric("Short Prob. %", round(100 * float(s.get("short_prob", 0)), 1))
-    summary_text = s.get("summary")
-    if summary_text:
-        bias_lower = s.get("bias", "").lower()
-        callout = st.info
-        if bias_lower == "long":
-            callout = st.success
-        elif bias_lower == "short":
-            callout = st.warning
-        callout(summary_text)
-else:
-    st.write("No signal for selected pair yet.")
-
-if drivers:
-    st.markdown("**Signal Drivers**")
-    cols_per_row = 2
-    for i in range(0, len(drivers), cols_per_row):
-        row = drivers[i : i + cols_per_row]
-        columns = st.columns(len(row))
-        for (title, value, desc), col in zip(row, columns):
+    if pair in signals_map:
+        s = signals_map[pair]
+        metric_cols = st.columns(4)
+        metrics = [
+            ("Market Regime", s.get("regime", "Unknown")),
+            ("Bias", s.get("bias", "Neutral")),
+            ("Long Prob. %", f"{round(100 * float(s.get('long_prob', 0)), 1):.1f}"),
+            ("Short Prob. %", f"{round(100 * float(s.get('short_prob', 0)), 1):.1f}"),
+        ]
+        for (title, value), col in zip(metrics, metric_cols):
             with col:
                 st.markdown(
                     f"""
-                    <div class="signal-driver">
-                        <div class="signal-driver-title">{title}</div>
-                        <div class="signal-driver-value">{value}</div>
-                        <div class="signal-driver-desc">{desc}</div>
+                    <div class="signal-pill">
+                        <div class="signal-pill-title">{title}</div>
+                        <div class="signal-pill-value">{value}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-else:
-    st.markdown(
-        "*Waiting on more data to break down the drivers. Run the worker or refresh once new samples arrive.*"
-    )
+        summary_text = s.get("summary")
+        if summary_text:
+            bias_lower = s.get("bias", "").lower()
+            callout = st.info
+            if bias_lower == "long":
+                callout = st.success
+            elif bias_lower == "short":
+                callout = st.warning
+            callout(summary_text)
+    else:
+        st.write("No signal for selected pair yet.")
 
-if explanations:
-    with st.expander("How this profile scores signals", expanded=False):
-        for key, text in explanations.items():
-            label = key.replace("_", " ").title()
-            st.markdown(f"**{label}:** {text}")
+    if drivers:
+        st.markdown("**Signal Drivers**")
+        cols_per_row = 2
+        for i in range(0, len(drivers), cols_per_row):
+            row = drivers[i : i + cols_per_row]
+            columns = st.columns(len(row))
+            for (title, value, desc), col in zip(row, columns):
+                with col:
+                    st.markdown(
+                        f"""
+                        <div class="signal-driver">
+                            <div class="signal-driver-title">{title}</div>
+                            <div class="signal-driver-value">{value}</div>
+                            <div class="signal-driver-desc">{desc}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+    else:
+        st.markdown(
+            "*Waiting on more data to break down the drivers. Run the worker or refresh once new samples arrive.*"
+        )
+
+    if explanations:
+        with st.expander("How this profile scores signals", expanded=False):
+            for key, text in explanations.items():
+                label = key.replace("_", " ").title()
+                st.markdown(f"**{label}:** {text}")
 
 with st.container():
     selected = st.selectbox(
@@ -721,222 +758,288 @@ if not pair:
     st.info("Select a pair to see data.")
     st.stop()
 
-st.subheader(f"Data for Pair: {pair}")
+with st.expander(f"Data for Pair: {pair}", expanded=True):
+    st.subheader(f"Data for Pair: {pair}")
+    st.markdown("Timeseries are displayed in GMT+1 (Amsterdam). Use the tabs below to inspect different market lenses.")
 
-visual_tabs = st.tabs(["Price Action", "Funding & OI", "Sentiment", "aggr.trade"])
+    visual_tabs = st.tabs(["Price Action", "Funding & OI", "Sentiment", "Returns", "Volume & Liquidity", "aggr.trade"])
 
-with visual_tabs[0]:
-    candles = ts_cache["candles"]
-    if candles is not None and not candles.empty:
-        fig = go.Figure(
-            data=[
-                go.Candlestick(
-                    x=candles.index,
-                    open=candles["open"],
-                    high=candles["high"],
-                    low=candles["low"],
-                    close=candles["close"],
-                    name="Price",
-                )
-            ]
-        )
-        fig.update_layout(
-            margin=dict(l=0, r=0, t=35, b=0),
-            template="plotly_dark",
-            title=f"{pair} · Candlestick",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No candles data available.")
-
-with visual_tabs[1]:
-    funding = ts_cache["funding"]
-    oi = ts_cache["oi"]
-    if funding is not None and not funding.empty and oi is not None and not oi.empty:
-        col = "rate" if "rate" in funding.columns else funding.columns[-1]
-        oi_col = "value_usd" if "value_usd" in oi.columns else oi.columns[-1]
-        merged = funding[[col]].join(oi[[oi_col]], how="inner")
-        merged = merged.dropna()
-        if merged.empty:
-            st.info("Not enough overlapping funding/OI data.")
+    with visual_tabs[0]:
+        candles = ts_cache["candles"]
+        if candles is not None and not candles.empty:
+            fig = go.Figure(
+                data=[
+                    go.Candlestick(
+                        x=candles.index,
+                        open=candles["open"],
+                        high=candles["high"],
+                        low=candles["low"],
+                        close=candles["close"],
+                        name="Price",
+                    )
+                ]
+            )
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=35, b=0),
+                template="plotly_dark",
+                title=f"{pair} · Candlestick",
+            )
+            fig.update_xaxes(title="Time (GMT+1)", rangeslider_visible=False, tickformat="%d %b %H:%M")
+            st.plotly_chart(fig, use_container_width=True)
         else:
+            st.info("No candles data available.")
+
+    with visual_tabs[1]:
+        funding = ts_cache["funding"]
+        oi = ts_cache["oi"]
+        if funding is not None and not funding.empty and oi is not None and not oi.empty:
+            col = "rate" if "rate" in funding.columns else funding.columns[-1]
+            oi_col = "value_usd" if "value_usd" in oi.columns else oi.columns[-1]
+            merged = funding[[col]].join(oi[[oi_col]], how="inner")
+            merged = merged.dropna()
+            if merged.empty:
+                st.info("Not enough overlapping funding/OI data.")
+            else:
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Bar(
+                        x=merged.index,
+                        y=merged[col] * 10000,
+                        name="Funding (bps)",
+                        marker_color="#22c55e",
+                        opacity=0.6,
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=merged.index,
+                        y=merged[oi_col] / 1_000_000,
+                        name="Open Interest (M USD)",
+                        mode="lines",
+                        line=dict(color="#38bdf8", width=2),
+                        yaxis="y2",
+                    )
+                )
+                fig.update_layout(
+                    template="plotly_dark",
+                    margin=dict(l=0, r=0, t=35, b=0),
+                    yaxis=dict(title="Funding (bps)"),
+                    yaxis2=dict(title="OI (Millions USD)", overlaying="y", side="right"),
+                    title=f"{pair} · Funding vs Open Interest",
+                )
+                fig.update_xaxes(title="Time (GMT+1)", tickformat="%d %b %H:%M")
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Funding or open interest data unavailable.")
+
+    with visual_tabs[2]:
+        sentiment = ts_cache["sentiment"]
+        if sentiment is not None and not sentiment.empty:
+            metric = "score_norm" if "score_norm" in sentiment.columns else sentiment.columns[-1]
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=sentiment.index,
+                    y=sentiment[metric],
+                    name="Sentiment",
+                    line=dict(color="#f97316"),
+                    fill="tozeroy",
+                )
+            )
+            fig.update_layout(
+                template="plotly_dark",
+                margin=dict(l=0, r=0, t=35, b=0),
+                title=f"{pair} · Sentiment Trend",
+            )
+            fig.update_xaxes(title="Time (GMT+1)", tickformat="%d %b %H:%M")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No sentiment data available.")
+
+    with visual_tabs[3]:
+        candles = ts_cache["candles"]
+        if candles is not None and not candles.empty:
+            returns = candles["close"].pct_change().dropna()
+            if not returns.empty:
+                fig = go.Figure(
+                    go.Histogram(x=returns * 100, nbinsx=40, marker_color="#8b5cf6")
+                )
+                fig.update_layout(
+                    template="plotly_dark",
+                    margin=dict(l=0, r=0, t=35, b=0),
+                    title=f"{pair} · Hourly Return Distribution",
+                    xaxis_title="Return (%)",
+                    yaxis_title="Frequency",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("Helps gauge tail risks and skew in the latest window.")
+            else:
+                st.info("Not enough data to compute returns yet.")
+        else:
+            st.info("No candles data available.")
+
+    with visual_tabs[4]:
+        candles = ts_cache["candles"]
+        oi = ts_cache["oi"]
+        if candles is not None and not candles.empty:
+            volume_series = candles["volume"] if "volume" in candles.columns else pd.Series(0, index=candles.index)
             fig = go.Figure()
             fig.add_trace(
                 go.Bar(
-                    x=merged.index,
-                    y=merged[col] * 10000,
-                    name="Funding (bps)",
-                    marker_color="#22c55e",
+                    x=candles.index,
+                    y=volume_series,
+                    name="Volume",
+                    marker_color="#0ea5e9",
                     opacity=0.6,
                 )
             )
-            fig.add_trace(
-                go.Scatter(
-                    x=merged.index,
-                    y=merged[oi_col] / 1_000_000,
-                    name="Open Interest (M USD)",
-                    mode="lines",
-                    line=dict(color="#38bdf8", width=2),
-                    yaxis="y2",
+            if oi is not None and not oi.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=oi.index,
+                        y=oi.get("value_usd", oi.iloc[:, 0]) / 1_000_000,
+                        name="Open Interest (M USD)",
+                        line=dict(color="#facc15", width=2),
+                        yaxis="y2",
+                    )
                 )
-            )
             fig.update_layout(
                 template="plotly_dark",
                 margin=dict(l=0, r=0, t=35, b=0),
-                yaxis=dict(title="Funding (bps)"),
+                yaxis=dict(title="Volume"),
                 yaxis2=dict(title="OI (Millions USD)", overlaying="y", side="right"),
-                title=f"{pair} · Funding vs Open Interest",
+                title=f"{pair} · Volume & Liquidity",
             )
+            fig.update_xaxes(title="Time (GMT+1)", tickformat="%d %b %H:%M")
             st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Funding or open interest data unavailable.")
-
-with visual_tabs[2]:
-    sentiment = ts_cache["sentiment"]
-    if sentiment is not None and not sentiment.empty:
-        metric = "score_norm" if "score_norm" in sentiment.columns else sentiment.columns[-1]
-        fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=sentiment.index,
-                y=sentiment[metric],
-                name="Sentiment",
-                line=dict(color="#f97316"),
-                fill="tozeroy",
-            )
-        )
-        fig.update_layout(
-            template="plotly_dark",
-            margin=dict(l=0, r=0, t=35, b=0),
-            title=f"{pair} · Sentiment Trend",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No sentiment data available.")
-
-with visual_tabs[3]:
-    st.write("Live liquidation feed via aggr.trade")
-    aggr_url = build_aggr_trade_url(pair)
-    st.link_button("Open aggr.trade in new tab", aggr_url)
-    st.caption("aggr.trade does not allow in-app embedding, so use the button above to view the live heatmap.")
-
-st.subheader("Insight Modules")
-analysis_tabs = st.tabs(["Funding Overlay", "Volatility Pulse", "Sentiment Radar"])
-
-with analysis_tabs[0]:
-    candles = ts_cache["candles"]
-    funding = ts_cache["funding"]
-    if candles is None or candles.empty or funding is None or funding.empty:
-        st.info("Need both candle and funding data for overlay.")
-    else:
-        merged = candles[["close"]].join(funding["rate" if "rate" in funding.columns else funding.columns[-1]], how="inner")
-        merged = merged.dropna()
-        if merged.empty:
-            st.info("Not enough overlapping data for overlay.")
         else:
-            price_norm = (merged["close"] / merged["close"].iloc[0]) * 100
-            funding_bps = merged.iloc[:, 1] * 10000
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(x=merged.index, y=price_norm, name="Price (norm 100)", line=dict(color="#a855f7"))
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=merged.index,
-                    y=funding_bps,
-                    name="Funding (bps)",
-                    line=dict(color="#f59e0b", dash="dot"),
-                    yaxis="y2",
+            st.info("Volume data unavailable.")
+
+    with visual_tabs[5]:
+        st.write("Live liquidation feed via aggr.trade")
+        aggr_url = build_aggr_trade_url(pair)
+        st.link_button("Open aggr.trade in new tab", aggr_url)
+        st.caption("aggr.trade does not allow in-app embedding, so use the button above to view the live heatmap.")
+
+with st.expander("Insight Modules", expanded=True):
+    st.subheader("Insight Modules")
+    analysis_tabs = st.tabs(["Funding Overlay", "Volatility Pulse", "Sentiment Radar"])
+
+    with analysis_tabs[0]:
+        candles = ts_cache["candles"]
+        funding = ts_cache["funding"]
+        if candles is None or candles.empty or funding is None or funding.empty:
+            st.info("Need both candle and funding data for overlay.")
+        else:
+            merged = candles[["close"]].join(funding["rate" if "rate" in funding.columns else funding.columns[-1]], how="inner")
+            merged = merged.dropna()
+            if merged.empty:
+                st.info("Not enough overlapping data for overlay.")
+            else:
+                price_norm = (merged["close"] / merged["close"].iloc[0]) * 100
+                funding_bps = merged.iloc[:, 1] * 10000
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(x=merged.index, y=price_norm, name="Price (norm 100)", line=dict(color="#a855f7"))
                 )
-            )
-            fig.update_layout(
-                template="plotly_dark",
-                yaxis=dict(title="Price (index)"),
-                yaxis2=dict(title="Funding (bps)", overlaying="y", side="right"),
-                margin=dict(l=0, r=0, t=35, b=0),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown(
-                """
-                **How to read this:**
-                - *Price (norm 100)* scales the first data point to 100 so you can focus on directional drift rather than absolute price.
-                - *Funding (bps)* shows whether longs or shorts are paying; persistent positive funding implies long crowding, negatives imply short crowding.
-                - When funding rises while price stalls or drops, be cautious of long squeezes; the inverse can precede short squeezes.
-                - Look for divergences: price grinding higher while funding cools is healthier than price pumping on aggressive positive funding.
-                """
-            )
+                fig.add_trace(
+                    go.Scatter(
+                        x=merged.index,
+                        y=funding_bps,
+                        name="Funding (bps)",
+                        line=dict(color="#f59e0b", dash="dot"),
+                        yaxis="y2",
+                    )
+                )
+                fig.update_layout(
+                    template="plotly_dark",
+                    yaxis=dict(title="Price (index)"),
+                    yaxis2=dict(title="Funding (bps)", overlaying="y", side="right"),
+                    margin=dict(l=0, r=0, t=35, b=0),
+                )
+                fig.update_xaxes(title="Time (GMT+1)", tickformat="%d %b %H:%M")
+                st.plotly_chart(fig, use_container_width=True)
+                st.markdown(
+                    """
+                    **How to read this:**
+                    - *Price (norm 100)* scales the first data point to 100 so you can focus on directional drift rather than absolute price.
+                    - *Funding (bps)* shows whether longs or shorts are paying; persistent positive funding implies long crowding, negatives imply short crowding.
+                    - When funding rises while price stalls or drops, be cautious of long squeezes; the inverse can precede short squeezes.
+                    - Look for divergences: price grinding higher while funding cools is healthier than price pumping on aggressive positive funding.
+                    """
+                )
 
-with analysis_tabs[1]:
-    vol = ts_cache["vol"]
-    if vol is None or vol.empty:
-        st.info("Volatility data not available yet.")
-    else:
-        series = vol["atr"] if "atr" in vol.columns else vol.iloc[:, 0]
-        metric_value = float(series.iloc[-1])
-        fig = go.Figure(
-            go.Indicator(
-                mode="gauge+number",
-                value=metric_value,
-                title={"text": "ATR Snapshot"},
-                gauge={
-                    "axis": {"range": [0, series.max() * 1.2 if series.max() else 1]},
-                    "bar": {"color": "#38bdf8"},
-                    "bgcolor": "#0f172a",
-                    "steps": [
-                        {"range": [0, series.median()], "color": "#1e3a8a"},
-                        {"range": [series.median(), series.max()], "color": "#0f766e"},
-                    ],
-                },
-            )
-        )
-        fig.update_layout(template="plotly_dark", margin=dict(l=0, r=0, t=35, b=0))
-        st.plotly_chart(fig, use_container_width=True)
-        stats = series.describe().to_frame(name="ATR").T
-        st.dataframe(stats)
-        st.markdown(
-            """
-            **How to read this:**
-            - *Latest ATR* shows the current absolute true range (volatility proxy).
-            - *mean / std* help gauge if today's movement is above its recent norm.
-            - A rising *max* or widening *std* often hints at breakout-like conditions.
-            - If the latest ATR is near the lower quartile, conditions are typically calmer (range-trading bias).
-            - When ATR presses into the upper quartile, tighten risk or look for momentum setups.
-            """
-        )
-
-with analysis_tabs[2]:
-    sentiment = ts_cache["sentiment"]
-    if sentiment is None or sentiment.empty or "keywords" not in sentiment.columns:
-        st.info("Sentiment keyword data is not available.")
-    else:
-        latest = sentiment.dropna(subset=["keywords"]).iloc[-1]
-        keywords = latest["keywords"]
-        if isinstance(keywords, dict) and keywords:
-            df_kw = (
-                pd.DataFrame({"keyword": list(keywords.keys()), "count": list(keywords.values())})
-                .sort_values("count", ascending=False)
-                .head(15)
-            )
+    with analysis_tabs[1]:
+        vol = ts_cache["vol"]
+        if vol is None or vol.empty:
+            st.info("Volatility data not available yet.")
+        else:
+            series = vol["atr"] if "atr" in vol.columns else vol.iloc[:, 0]
+            metric_value = float(series.iloc[-1])
             fig = go.Figure(
-                go.Bar(
-                    x=df_kw["keyword"],
-                    y=df_kw["count"],
-                    marker_color="#f472b6",
+                go.Indicator(
+                    mode="gauge+number",
+                    value=metric_value,
+                    title={"text": "ATR Snapshot"},
+                    gauge={
+                        "axis": {"range": [0, series.max() * 1.2 if series.max() else 1]},
+                        "bar": {"color": "#38bdf8"},
+                        "bgcolor": "#0f172a",
+                        "steps": [
+                            {"range": [0, series.median()], "color": "#1e3a8a"},
+                            {"range": [series.median(), series.max()], "color": "#0f766e"},
+                        ],
+                    },
                 )
             )
             fig.update_layout(template="plotly_dark", margin=dict(l=0, r=0, t=35, b=0))
             st.plotly_chart(fig, use_container_width=True)
+            stats = series.describe().to_frame(name="ATR").T
+            st.dataframe(stats)
+            st.markdown(
+                """
+                **How to read this:**
+                - *Latest ATR* shows the current absolute true range (volatility proxy).
+                - *mean / std* help gauge if today's movement is above its recent norm.
+                - A rising *max* or widening *std* often hints at breakout-like conditions.
+                - If the latest ATR is near the lower quartile, conditions are typically calmer (range-trading bias).
+                - When ATR presses into the upper quartile, tighten risk or look for momentum setups.
+                """
+            )
+
+    with analysis_tabs[2]:
+        sentiment = ts_cache["sentiment"]
+        if sentiment is None or sentiment.empty or "keywords" not in sentiment.columns:
+            st.info("Sentiment keyword data is not available.")
         else:
-            st.info("Latest sentiment entry does not include keyword counts.")
-        st.markdown(
-            """
-            **How to read this:**
-            - Bars show the latest counts of sentiment keywords captured from CryptoPanic headlines.
-            - Liquidity-stress words (e.g., *liquidation*, *margin call*) signal risk-off chatter; bullish words (e.g., *rally*, *surge*) hint at optimism.
-            - Use the mix to contextualise signal bias: a short setup is stronger when bearish terms dominate, and vice versa.
-            - Sudden spikes in any keyword bucket often precede volatility bursts—combine with the Funding overlay for higher conviction.
-            """
-        )
+            latest = sentiment.dropna(subset=["keywords"]).iloc[-1]
+            keywords = latest["keywords"]
+            if isinstance(keywords, dict) and keywords:
+                df_kw = (
+                    pd.DataFrame({"keyword": list(keywords.keys()), "count": list(keywords.values())})
+                    .sort_values("count", ascending=False)
+                    .head(15)
+                )
+                fig = go.Figure(
+                    go.Bar(
+                        x=df_kw["keyword"],
+                        y=df_kw["count"],
+                        marker_color="#f472b6",
+                    )
+                )
+                fig.update_layout(template="plotly_dark", margin=dict(l=0, r=0, t=35, b=0))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Latest sentiment entry does not include keyword counts.")
+            st.markdown(
+                """
+                **How to read this:**
+                - Bars show the latest counts of sentiment keywords captured from CryptoPanic headlines.
+                - Liquidity-stress words (e.g., *liquidation*, *margin call*) signal risk-off chatter; bullish words (e.g., *rally*, *surge*) hint at optimism.
+                - Use the mix to contextualise signal bias: a short setup is stronger when bearish terms dominate, and vice versa.
+                - Sudden spikes in any keyword bucket often precede volatility bursts—combine with the Funding overlay for higher conviction.
+                """
+            )
 
 st.divider()
 st.caption("Configure pairs, Telegram alerts, and scheduler in .env. Add API keys for live data.")
